@@ -1,6 +1,6 @@
 # Release
 
-The package is used to release major and patch versions for framework and packages. The release process is very complex, so we built this package to save time.
+The package releases major and patch versions for framework and packages, and runs the `@goravel-agent` mention poller. The release process is very complex, so we built this package to save time.
 
 ## Setup
 
@@ -63,3 +63,26 @@ Run command below to run test:
 ```
 go test ./...
 ```
+
+## Mention agent
+
+The repo also runs the `@goravel-agent` mention poller: it reads relay events,
+routes each mention to a `paseo` mode (`ship`, `review`, `analyze`) with the
+configured AI provider, and dispatches the run.
+
+Set `AGENT_BASE_URL`, `AGENT_API_TOKEN`, `AGENT_ALLOWED_SENDERS`,
+`AGENT_PROJECT_NAME` and `AI_PROVIDER`/`DEEPSEEK_API_KEY` in `.env` (see
+`.env.example`); `GITHUB_TOKEN` enables the 👀 reaction. The `paseo` CLI must be
+on `PATH`. The mode definitions (`ship`, `review`, `analyze`) still live in the
+`goravel/agents` repository.
+
+```shell
+# One poll cycle
+./artisan poll-events
+
+# Scheduler: poll-events every five seconds, skipping an overlapping tick
+./artisan schedule:run
+```
+
+The live-router feature tests skip themselves unless `AI_PROVIDER` and its API
+key are set.

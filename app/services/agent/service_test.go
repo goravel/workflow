@@ -165,24 +165,6 @@ func expectReviewReaction(t *testing.T, repository, nodeID string) *mocksagent.R
 	return reactor
 }
 
-// deleteRecorder collects delete URLs across the poller's worker pool.
-type deleteRecorder struct {
-	mu   sync.Mutex
-	urls []string
-}
-
-func (r *deleteRecorder) add(url string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.urls = append(r.urls, url)
-}
-
-func (r *deleteRecorder) list() []string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return append([]string(nil), r.urls...)
-}
-
 func TestServicePollDispatchesMentionsAndDeletes(t *testing.T) {
 	factory := mock.Factory()
 	factory.Log()

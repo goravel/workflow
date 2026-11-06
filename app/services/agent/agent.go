@@ -276,8 +276,6 @@ func (routerAgent) Tools() []ai.Tool { return nil }
 const (
 	// opencodeProvider is the paseo agent provider.
 	opencodeProvider = "opencode"
-	// stderrLimit bounds the agent stderr kept for the error message.
-	stderrLimit = 64 * 1024
 )
 
 // opencodeDispatcher turns a dispatch request into one titled paseo workspace and

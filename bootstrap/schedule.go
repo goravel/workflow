@@ -13,5 +13,8 @@ func Schedules() []schedule.Event {
 			Command("poll-events").
 			EveryFiveSeconds().
 			SkipIfStillRunning(),
+		facades.Schedule().
+			Command("heartbeat").
+			EveryMinute(),
 	}
 }

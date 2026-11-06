@@ -13,5 +13,6 @@ func Commands() []console.Command {
 		commands.NewPatch(),
 		commands.NewPreview(),
 		&commands.PollEvents{},
+		commands.NewHeartbeatCommand(),
 	}
 }

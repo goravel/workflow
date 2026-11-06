@@ -1,9 +1,16 @@
-version: '3'
-
+# Create .env from .env.example before the first `docker compose up`: the app
+# exits without APP_KEY, and Docker would create an empty directory at ./.env.
 services:
-  goravel:
+  workflow:
     build:
       context: .
     ports:
-      - "3000:3000"
+      - "4500:4500"
     restart: always
+    volumes:
+      - "./database:/www/database"
+      - "./storage:/www/storage"
+      # .env is intentionally read-write: `artisan key:generate` and
+      # `env:encrypt`/`env:decrypt` write to the env file path
+      # (support.EnvFilePath = /www/.env). Do not append :ro.
+      - "./.env:/www/.env"

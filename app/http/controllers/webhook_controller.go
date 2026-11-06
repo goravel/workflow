@@ -35,7 +35,7 @@ func (r *WebhookController) Github(ctx http.Context) http.Response {
 			})
 		}
 
-		facades.Mail().To([]string{facades.Config().GetString("mail.to")}).Subject("Github Webhook Failed").Content(mail.Content{Html: err.Error()}).Send()
+		facades.Mail().To([]string{facades.Config().GetString("mail.to")}).Subject("Github Webhook Failed").Content(mail.Content{Html: err.Error()}).Send() //nolint:errcheck // failure alerts are best-effort
 
 		return ctx.Response().Json(http.StatusBadRequest, http.Json{
 			"error": err.Error(),

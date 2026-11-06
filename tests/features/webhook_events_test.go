@@ -40,6 +40,7 @@ func TestWebhookEventsTestSuite(t *testing.T) {
 // library captures its secret when the handler is built, so a refresh is
 // required for signature verification to use the test secret.
 func (s *WebhookEventsTestSuite) SetupTest() {
+	facades.Config().Add("database.default", "sqlite")
 	facades.Config().Add("database.connections.sqlite.database",
 		filepath.Join(s.T().TempDir(), "goravel_webhook_events_test.db"))
 	facades.Config().Add("github", map[string]any{
@@ -191,7 +192,7 @@ func (s *WebhookEventsTestSuite) TestEmptyBodyIsRejected() {
 }
 
 // A body larger than the cap is rejected and nothing is stored. The cap mirrors
-// app/services/github.go's maxWebhookBodyBytes (25 MB) and a non-JSON Content-Type keeps the
+// app/services/discord/github.go's maxWebhookBodyBytes (25 MB) and a non-JSON Content-Type keeps the
 // HTTP driver's request wrapper from pre-consuming the body.
 func (s *WebhookEventsTestSuite) TestOversizedBodyIsRejected() {
 	const oversizeBodyBytes = 25<<20 + 1

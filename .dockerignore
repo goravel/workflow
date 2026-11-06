@@ -1,0 +1,5 @@
+.git
+.env
+database/goravel.db
+storage/logs/*.log
+storage/temp

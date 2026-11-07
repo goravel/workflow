@@ -432,8 +432,10 @@ func testModels() map[string]string {
 }
 
 // dispatcherArgs returns the argv the dispatcher builds for the run, with
-// `do it` as prompt. The run carries no extra environment beyond the scrub
-// prefix paseo is always started with.
+// `do it` as prompt. The run adds no extra environment, so argv starts with
+// scrubbedEnvArgs(), which strips secrets from the paseo subprocess. The setup
+// subagent gets no clone-prefix variable: it infers the repository from the
+// PR or issue link in the prompt, https or ssh as that link provides.
 func dispatcherArgs(mode, model, thinking, title, workspaceID string) []any {
 	args := append(scrubbedEnvArgs(), "paseo", "run",
 		"--provider", "opencode",

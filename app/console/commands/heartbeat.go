@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/go-resty/resty/v2"
@@ -53,7 +54,13 @@ func (r *Heartbeat) Handle(ctx console.Context) error {
 	for _, url := range urls {
 		resp, err := client.R().Get(url)
 		if err != nil || (resp.StatusCode() < 200 || resp.StatusCode() >= 300) {
-			if err := r.discord.SendMessage(channelID, fmt.Sprintf("Website %s is down", url)); err != nil {
+			if channelID == "" {
+				facades.Log().Warning(fmt.Sprintf("Website %s is down but no heartbeat channel is set", url))
+				continue
+			}
+
+			// A disabled Discord is not an alert failure worth logging.
+			if err := r.discord.SendMessage(channelID, fmt.Sprintf("Website %s is down", url)); err != nil && !errors.Is(err, discordservices.ErrNotConfigured) {
 				facades.Log().Error(fmt.Sprintf("Failed to send message to Discord: %v", err))
 			}
 		}

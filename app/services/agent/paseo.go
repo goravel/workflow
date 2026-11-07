@@ -244,9 +244,6 @@ func (p *Paseo) Run(ctx context.Context, request RunRequest) ([]string, error) {
 	// Always set: the workspace and the run must share one title, and the service
 	// guarantees a non-blank one.
 	command = append(command, "--title", request.Title, "--workspace", request.WorkspaceID)
-	// The run's setup subagent clones through `--env`, because paseo starts it
-	// with a scrubbed environment; the depth stays unset, so it clones fully.
-	command = append(command, "--env", "GITHUB_CLONE_PREFIX="+gitCloneURL)
 	// `--` keeps the prompt from being read as a flag.
 	command = append(command, "--no-wait", "--", request.Prompt)
 

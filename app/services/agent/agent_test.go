@@ -432,8 +432,8 @@ func testModels() map[string]string {
 }
 
 // dispatcherArgs returns the argv the dispatcher builds for the run, with
-// `do it` as prompt. The SSH clone prefix rides in the run argv, not the
-// environment; the clone depth stays unset so setup clones fully.
+// `do it` as prompt. The run carries no extra environment beyond the scrub
+// prefix paseo is always started with.
 func dispatcherArgs(mode, model, thinking, title, workspaceID string) []any {
 	args := append(scrubbedEnvArgs(), "paseo", "run",
 		"--provider", "opencode",
@@ -444,7 +444,6 @@ func dispatcherArgs(mode, model, thinking, title, workspaceID string) []any {
 		args = append(args, "--thinking", thinking)
 	}
 	args = append(args, "--title", title, "--workspace", workspaceID)
-	args = append(args, "--env", "GITHUB_CLONE_PREFIX=git@github.com:")
 
 	return append(args, "--no-wait", "--", "do it")
 }

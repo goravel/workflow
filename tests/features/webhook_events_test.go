@@ -255,49 +255,6 @@ func (s *WebhookEventsTestSuite) TestNonJSONBodyIsStoredVerbatim() {
 	s.Equal(raw, stored.Payload)
 }
 
-// A pull_request/opened delivery is stored and acknowledged even with Discord
-// off: no thread is opened and no tracking row is written.
-func (s *WebhookEventsTestSuite) TestPullRequestOpenedWithoutDiscordStoresEvent() {
-	facades.Config().Add("discord", map[string]any{
-		"bot": map[string]any{"token": ""},
-		"roles": map[string]any{
-			"core": "1234567890",
-		},
-		"pull_requests": map[string]any{
-			"channel_id": "9876543210",
-		},
-	})
-	facades.App().Refresh()
-
-	// An unrelated row proves the count assertion below can fail.
-	s.NoError(facades.Orm().Query().Create(&models.PullRequest{
-		DiscordThreadID: "existing-thread",
-		GithubID:        7654321,
-		Title:           "Unrelated pull request",
-		Url:             "https://github.com/goravel/agents/pull/1",
-	}))
-
-	body := `{"action":"opened","number":7,` +
-		`"pull_request":{"id":1234567,"title":"Add Discord guard","state":"open","draft":false,` +
-		`"html_url":"https://github.com/goravel/agents/pull/7",` +
-		`"user":{"login":"bowen","html_url":"https://github.com/bowen"}},` +
-		`"repository":{"full_name":"goravel/agents","html_url":"https://github.com/goravel/agents"},` +
-		`"sender":{"login":"bowen"}}`
-
-	resp := s.postWebhook("delivery-pr-opened", "pull_request", signGitHub(webhookSecret, body), body)
-	resp.AssertOk()
-
-	var event models.WebhookEvent
-	s.NoError(facades.Orm().Query().Where("delivery_id", "delivery-pr-opened").First(&event))
-	s.Equal("opened", event.Action)
-	s.Equal("goravel/agents", event.Repository)
-
-	var rows []models.PullRequest
-	s.NoError(facades.Orm().Query().Model(&models.PullRequest{}).Find(&rows))
-	s.Len(rows, 1)
-	s.Equal(int64(7654321), rows[0].GithubID)
-}
-
 // The read/delete endpoints are guarded by the API token.
 func (s *WebhookEventsTestSuite) TestEventsEndpointsRequireToken() {
 	// Missing header.

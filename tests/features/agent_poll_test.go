@@ -355,7 +355,6 @@ func (s *AgentPollTestSuite) pollOnce(page string) pollObservation {
 			"--thinking", testifymock.Anything,
 			"--title", testifymock.MatchedBy(func(title string) bool { return title != "" }),
 			"--workspace", "wks_0123456789abcdef",
-			"--env", "GITHUB_CLONE_PREFIX=git@github.com:",
 			"--no-wait", "--",
 			testifymock.MatchedBy(func(prompt string) bool {
 				// The prompt carries no Repository line: the router's choice
@@ -365,14 +364,14 @@ func (s *AgentPollTestSuite) pollOnce(page string) pollObservation {
 		Run(func(_ string, args ...string) {
 			// args = [-i, PATH…, HOME…, paseo, run, --provider, opencode,
 			//         --mode, <mode>, --model, <model>, --thinking, <thinking>,
-			//         --title, <title>, --workspace, <id>, --env,
-			//         GITHUB_CLONE_PREFIX…, --no-wait, --, <prompt>].
+			//         --title, <title>, --workspace, <id>, --no-wait, --,
+			//         <prompt>].
 			observation.mode = args[8]
 			observation.model = args[10]
 			observation.thinking = args[12]
 			observation.title = args[14]
 			observation.workspaceID = args[16]
-			observation.prompt = args[21]
+			observation.prompt = args[19]
 		}).
 		Return(runResultMock).
 		Once()

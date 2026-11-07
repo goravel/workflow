@@ -269,6 +269,14 @@ func (s *WebhookEventsTestSuite) TestPullRequestOpenedWithoutDiscordStoresEvent(
 	})
 	facades.App().Refresh()
 
+	// An unrelated row proves the count assertion below can fail.
+	s.NoError(facades.Orm().Query().Create(&models.PullRequest{
+		DiscordThreadID: "existing-thread",
+		GithubID:        7654321,
+		Title:           "Unrelated pull request",
+		Url:             "https://github.com/goravel/agents/pull/1",
+	}))
+
 	body := `{"action":"opened","number":7,` +
 		`"pull_request":{"id":1234567,"title":"Add Discord guard","state":"open","draft":false,` +
 		`"html_url":"https://github.com/goravel/agents/pull/7",` +
@@ -285,8 +293,9 @@ func (s *WebhookEventsTestSuite) TestPullRequestOpenedWithoutDiscordStoresEvent(
 	s.Equal("goravel/agents", event.Repository)
 
 	var rows []models.PullRequest
-	s.NoError(facades.Orm().Query().Model(&models.PullRequest{}).Where("github_id", int64(1234567)).Find(&rows))
-	s.Empty(rows)
+	s.NoError(facades.Orm().Query().Model(&models.PullRequest{}).Find(&rows))
+	s.Len(rows, 1)
+	s.Equal(int64(7654321), rows[0].GithubID)
 }
 
 // The read/delete endpoints are guarded by the API token.

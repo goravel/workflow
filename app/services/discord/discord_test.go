@@ -40,20 +40,18 @@ func TestNewDiscord_TokenEmpty(t *testing.T) {
 	assert.Nil(t, impl.session)
 
 	threadID, err := impl.CreateThread("channel", Thread{Title: "title", Content: "content"})
-	assert.Equal(t, ErrNotConfigured, err)
+	assert.ErrorIs(t, err, ErrNotConfigured)
 	assert.Empty(t, threadID)
-	assert.Equal(t, ErrNotConfigured, impl.DeleteThread("thread"))
-	assert.Equal(t, ErrNotConfigured, impl.SendMessage("channel", "message"))
+	assert.ErrorIs(t, impl.DeleteThread("thread"), ErrNotConfigured)
+	assert.ErrorIs(t, impl.SendMessage("channel", "message"), ErrNotConfigured)
 }
 
 func TestCloseDiscord_NoSession(t *testing.T) {
 	setup(t, "")
-	discordSession = nil
+
+	_, err := NewDiscord()
+	require.NoError(t, err)
 
 	// CloseDiscord is the shutdown path the runner calls with Discord off.
 	assert.NotPanics(t, CloseDiscord)
-}
-
-func TestErrNotConfigured_Sentinel(t *testing.T) {
-	assert.NotErrorIs(t, assert.AnError, ErrNotConfigured)
 }

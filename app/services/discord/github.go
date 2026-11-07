@@ -201,7 +201,6 @@ func (r *GithubImpl) handlePullRequestOpenedEvent(payload github.PullRequestPayl
 		Title:   payload.PullRequest.Title,
 		Content: content,
 	})
-	// No thread means nothing to track, so skip the row as well.
 	if errors.Is(err, ErrNotConfigured) {
 		return nil
 	}
@@ -223,7 +222,7 @@ func (r *GithubImpl) handlePullRequestOpenedEvent(payload github.PullRequestPayl
 }
 
 func (r *GithubImpl) handlePullRequestReadyForReviewEvent(pullRequest *models.PullRequest) error {
-	err := r.discord.SendMessage(pullRequest.DiscordThreadID, fmt.Sprintf("Opend cc: <@&%s>", r.coreRoleID))
+	err := r.discord.SendMessage(pullRequest.DiscordThreadID, fmt.Sprintf("Opened cc: <@&%s>", r.coreRoleID))
 	if errors.Is(err, ErrNotConfigured) {
 		return nil
 	}

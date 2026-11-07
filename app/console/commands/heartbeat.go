@@ -55,6 +55,7 @@ func (r *Heartbeat) Handle(ctx console.Context) error {
 		resp, err := client.R().Get(url)
 		if err != nil || (resp.StatusCode() < 200 || resp.StatusCode() >= 300) {
 			if channelID == "" {
+				facades.Log().Warning(fmt.Sprintf("Website %s is down but no heartbeat channel is set", url))
 				continue
 			}
 

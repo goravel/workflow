@@ -201,6 +201,10 @@ func (r *GithubImpl) handlePullRequestOpenedEvent(payload github.PullRequestPayl
 		Title:   payload.PullRequest.Title,
 		Content: content,
 	})
+	// No thread means nothing to track, so skip the row as well.
+	if errors.Is(err, ErrNotConfigured) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -219,7 +223,12 @@ func (r *GithubImpl) handlePullRequestOpenedEvent(payload github.PullRequestPayl
 }
 
 func (r *GithubImpl) handlePullRequestReadyForReviewEvent(pullRequest *models.PullRequest) error {
-	return r.discord.SendMessage(pullRequest.DiscordThreadID, fmt.Sprintf("Opend cc: <@&%s>", r.coreRoleID))
+	err := r.discord.SendMessage(pullRequest.DiscordThreadID, fmt.Sprintf("Opend cc: <@&%s>", r.coreRoleID))
+	if errors.Is(err, ErrNotConfigured) {
+		return nil
+	}
+
+	return err
 }
 
 //nolint:unused
@@ -234,7 +243,8 @@ func (r *GithubImpl) handlePullRequestLabeledEvent(payload github.PullRequestPay
 }
 
 func (r *GithubImpl) handlePullRequestClosedEvent(pullRequest *models.PullRequest) error {
-	if err := r.discord.DeleteThread(pullRequest.DiscordThreadID); err != nil {
+	// With Discord off there is no thread to delete, but the stored row still goes.
+	if err := r.discord.DeleteThread(pullRequest.DiscordThreadID); err != nil && !errors.Is(err, ErrNotConfigured) {
 		return err
 	}
 

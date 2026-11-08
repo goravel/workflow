@@ -34,19 +34,19 @@ func TestWebhookEventsTestSuite(t *testing.T) {
 	suite.Run(t, new(WebhookEventsTestSuite))
 }
 
-// SetupTest points the default sqlite connection at an isolated temp database
-// and configures the github webhook secret / API token, then refreshes the
-// application so the route handlers pick up the new configuration. The webhook
-// library captures its secret when the handler is built, so a refresh is
-// required for signature verification to use the test secret.
+// SetupTest points the default sqlite connection at an isolated temp database,
+// configures the github webhook secret and the agent API token, then refreshes
+// the application so the route handlers pick up the new configuration. The
+// webhook library captures its secret when the handler is built, so a refresh
+// is required for signature verification to use the test secret.
 func (s *WebhookEventsTestSuite) SetupTest() {
 	facades.Config().Add("database.default", "sqlite")
 	facades.Config().Add("database.connections.sqlite.database",
 		filepath.Join(s.T().TempDir(), "goravel_webhook_events_test.db"))
 	facades.Config().Add("github", map[string]any{
 		"webhook_secret": webhookSecret,
-		"api_token":      webhookToken,
 	})
+	facades.Config().Add("agent.api_token", webhookToken)
 	facades.App().Refresh()
 	s.RefreshDatabase()
 }
@@ -117,7 +117,6 @@ func (s *WebhookEventsTestSuite) getEvents(uri string) contractshttp.Response {
 func (s *WebhookEventsTestSuite) TestWebhookRejectedWhenSecretMissing() {
 	facades.Config().Add("github", map[string]any{
 		"webhook_secret": "",
-		"api_token":      webhookToken,
 	})
 	facades.App().Refresh()
 
@@ -274,8 +273,8 @@ func (s *WebhookEventsTestSuite) TestEventsEndpointsRequireToken() {
 	// An empty configured token rejects every request, including an empty header.
 	facades.Config().Add("github", map[string]any{
 		"webhook_secret": webhookSecret,
-		"api_token":      "",
 	})
+	facades.Config().Add("agent.api_token", "")
 	emptyResp, err := s.Http(s.T()).WithHeader("X-Api-Token", "").Get("/webhooks/events")
 	s.Require().NoError(err)
 	emptyResp.AssertUnauthorized()

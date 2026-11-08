@@ -11,7 +11,8 @@ func init() {
 		// Full URL of the relay events endpoint.
 		"base_url": config.Env("AGENT_BASE_URL", "http://localhost:4500/webhooks/events"),
 
-		// Token sent as the X-Api-Token header on every relay request.
+		// Token sent as the X-Api-Token header on every relay request, and required
+		// from callers of this app's /webhooks/events read and delete endpoints.
 		"api_token": config.Env("AGENT_API_TOKEN", ""),
 
 		// Name of the paseo project every run workspace is created in: the

@@ -4,18 +4,31 @@ on:
     branches:
       - master
   pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   test:
-    strategy:
-      matrix:
-        go: [ "1.26", "1.27" ]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+      # One job on stable by design; go.mod's go directive is the compatibility floor.
       - uses: actions/setup-go@v7
         with:
-          go-version: ${{ matrix.go }}
+          go-version: 'stable'
+          cache: true
       - name: Install dependencies
-        run: go mod tidy
-      - name: Run tests
-        run: go test -timeout 10m ./...
+        run: go mod download
+      - name: Run tests with coverage
+        run: go test -timeout 10m -coverprofile="coverage.out" ./...
+      - name: Print coverage report
+        run: go tool cover -func=coverage.out
+      - name: Upload coverage report to Codecov
+        uses: codecov/codecov-action@v7
+        with:
+          disable_search: true
+          files: coverage.out
+          token: ${{ secrets.CODECOV }}

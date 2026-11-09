@@ -2,8 +2,6 @@ module goravel
 
 go 1.26.0
 
-toolchain go1.27.3
-
 tool github.com/vektra/mockery/v2
 
 require (

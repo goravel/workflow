@@ -128,7 +128,7 @@ require (
 	github.com/ugorji/go/codec v1.3.1 // indirect
 	github.com/unrolled/secure v1.17.0 // indirect
 	github.com/urfave/cli/v3 v3.10.1 // indirect
-	github.com/vektra/mockery/v2 v2.53.8 // indirect
+	github.com/vektra/mockery/v3 v3.9.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/xrash/smetrics v0.0.0-20250705151800-55b8f293f342 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.5.0 // indirect

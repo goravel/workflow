@@ -5,7 +5,7 @@ go 1.26.0
 tool github.com/vektra/mockery/v2
 
 require (
-	github.com/bwmarrin/discordgo v0.28.1
+	github.com/bwmarrin/discordgo v0.29.0
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-playground/webhooks/v6 v6.4.0
 	github.com/go-resty/resty/v2 v2.16.5

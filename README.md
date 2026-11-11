@@ -10,7 +10,7 @@ Release Goravel version has no section of its own: the release commands read `GI
 
 The **Notification in Discord** section is optional: leave every `DISCORD_*` and `MAIL_*` key blank and webhook events are still stored — only pull-request threads, core-role mentions, heartbeat alerts, and webhook failure mail are skipped. `MAIL_*` is the failure-alert channel, so it lives here even though the section is named Discord.
 
-The release commands need a token with Read and Write access to Contents, Pull requests, and Actions.
+The release commands need a token with Read and Write access to Contents, Pull requests, and Actions, plus Read access to Checks.
 
 Github link: https://github.com/settings/personal-access-tokens
 
@@ -78,13 +78,15 @@ configured AI provider, and dispatches the run.
 
 Fill in **Consume GitHub events** in `.env.example` (`AGENT_BASE_URL`,
 `AGENT_PROJECT_NAME`, `AGENT_ALLOWED_SENDERS`, `AI_PROVIDER`/`DEEPSEEK_API_KEY`);
-`AGENT_ALLOWED_SENDERS` is required — a comma-separated list of GitHub
-usernames such as `bowen, alice` — and `poll-events` refuses to start without
-it. `AGENT_API_TOKEN` is shared with Save GitHub events and `GITHUB_TOKEN` is
-shared with Release Goravel version — both are declared in the shared-key
-block. When consuming events the `GITHUB_TOKEN` is optional and only enables
-the 👀 reaction. The `paseo` CLI must be on `PATH`. The mode definitions
-(`ship`, `review`, `analyze`) still live in the `goravel/agents` repository.
+`AGENT_PROJECT_NAME` and `AGENT_ALLOWED_SENDERS` are required — the `paseo`
+project each run's workspace is created in, and a comma-separated list of
+GitHub usernames such as `bowen, alice`. `poll-events` refuses to start when
+either is blank. `AGENT_API_TOKEN` is shared with Save GitHub events and
+`GITHUB_TOKEN` is shared with Release Goravel version — both are declared in
+the shared-key block. When consuming events the `GITHUB_TOKEN` is optional and
+only enables the 👀 reaction. The `paseo` CLI must be on `PATH`. The mode
+definitions (`ship`, `review`, `analyze`) still live in the `goravel/agents`
+repository.
 
 ```shell
 # One poll cycle

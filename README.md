@@ -4,7 +4,13 @@ The package releases major and patch versions for framework and packages, and ru
 
 ## Setup
 
-Set the `GITHUB_TOKEN` environment variable in the `.env` file to your GitHub token first. Required Read and Write accesses: Contents, Pull requests, and Actions.
+Copy `.env.example` to `.env` and fill in only the parts you need — the file is grouped into **Save GitHub events**, **Consume GitHub events**, **Notification in Discord**, and shared-key comments. The unlabelled keys at the top are common to every feature: app name, key, debug flag, logging, the sqlite database, and session settings.
+
+Release Goravel version has no section of its own: the release commands read `GITHUB_TOKEN` from the shared-key block, whose comment names Release Goravel version.
+
+The **Notification in Discord** section is optional: leave every `DISCORD_*` and `MAIL_*` key blank and webhook events are still stored — only pull-request threads, core-role mentions, heartbeat alerts, and webhook failure mail are skipped. `MAIL_*` is the failure-alert channel, so it lives here even though the section is named Discord.
+
+The release commands need a token with Read and Write access to Contents, Pull requests, and Actions, plus Read access to Checks.
 
 Github link: https://github.com/settings/personal-access-tokens
 
@@ -70,11 +76,17 @@ The repo also runs the `@goravel-agent` mention poller: it reads relay events,
 routes each mention to a `paseo` mode (`ship`, `review`, `analyze`) with the
 configured AI provider, and dispatches the run.
 
-Set `AGENT_BASE_URL`, `AGENT_API_TOKEN`, `AGENT_ALLOWED_SENDERS`,
-`AGENT_PROJECT_NAME` and `AI_PROVIDER`/`DEEPSEEK_API_KEY` in `.env` (see
-`.env.example`); `GITHUB_TOKEN` enables the 👀 reaction. The `paseo` CLI must be
-on `PATH`. The mode definitions (`ship`, `review`, `analyze`) still live in the
-`goravel/agents` repository.
+Fill in **Consume GitHub events** in `.env.example` (`AGENT_BASE_URL`,
+`AGENT_PROJECT_NAME`, `AGENT_ALLOWED_SENDERS`, `AI_PROVIDER`/`DEEPSEEK_API_KEY`);
+`AGENT_PROJECT_NAME` and `AGENT_ALLOWED_SENDERS` are required — the `paseo`
+project each run's workspace is created in, and a comma-separated list of
+GitHub usernames such as `bowen, alice`. `poll-events` refuses to start when
+either is blank. `AGENT_API_TOKEN` is shared with Save GitHub events and
+`GITHUB_TOKEN` is shared with Release Goravel version — both are declared in
+the shared-key block. When consuming events the `GITHUB_TOKEN` is optional and
+only enables the 👀 reaction. The `paseo` CLI must be on `PATH`. The mode
+definitions (`ship`, `review`, `analyze`) still live in the `goravel/agents`
+repository.
 
 ```shell
 # One poll cycle

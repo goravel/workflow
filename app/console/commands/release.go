@@ -3,6 +3,7 @@ package commands
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"sort"
 	"strings"
@@ -384,8 +385,16 @@ func (r *Release) checkCIPRsStatus(repoToPR map[string]*github.PullRequest) erro
 
 			if err := r.ctx.Spinner("Checking CI status for all repos...", console.SpinnerOption{
 				Action: func() error {
-					for repo, pr := range repoToPR {
-						if pr == nil || passed[repo] {
+					// Range a copy: the goroutines below refresh repoToPR with the latest PRs.
+					for repo, pr := range maps.Clone(repoToPR) {
+						if pr == nil {
+							continue
+						}
+
+						mu.Lock()
+						skip := passed[repo]
+						mu.Unlock()
+						if skip {
 							continue
 						}
 

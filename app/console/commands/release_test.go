@@ -2394,13 +2394,29 @@ func (s *ReleaseTestSuite) Test_triggerExampleAICI() {
 	}
 }
 
+// expectSpinnerRun stubs a spinner that runs its action inline.
+func (s *ReleaseTestSuite) expectSpinnerRun(msg string) {
+	s.T().Helper()
+
+	s.mockContext.EXPECT().Spinner(msg, mock.AnythingOfType("console.SpinnerOption")).
+		RunAndReturn(func(msg string, opts console.SpinnerOption) error {
+			return opts.Action()
+		}).Once()
+}
+
 func (s *ReleaseTestSuite) Test_checkCIPRsStatus() {
 	var (
-		repo = "gin"
-		pr   = &github.PullRequest{
+		repo  = "gin"
+		repo2 = "fiber"
+		pr    = &github.PullRequest{
 			Number:  convert.Pointer(1),
 			HTMLURL: convert.Pointer("https://github.com/goravel/gin/pull/1"),
 			Head:    &github.PullRequestBranch{SHA: convert.Pointer("abc123")},
+		}
+		pr2 = &github.PullRequest{
+			Number:  convert.Pointer(2),
+			HTMLURL: convert.Pointer("https://github.com/goravel/fiber/pull/2"),
+			Head:    &github.PullRequestBranch{SHA: convert.Pointer("def456")},
 		}
 		choices = []console.Choice{
 			{
@@ -2450,10 +2466,7 @@ func (s *ReleaseTestSuite) Test_checkCIPRsStatus() {
 			repoToPR: func() map[string]*github.PullRequest { return map[string]*github.PullRequest{repo: nil} },
 			setup: func() {
 				s.mockContext.EXPECT().Choice("Check CI status?", choices).Return("Check", nil).Once()
-				s.mockContext.EXPECT().Spinner(spinnerMsg, mock.AnythingOfType("console.SpinnerOption")).
-					RunAndReturn(func(msg string, opts console.SpinnerOption) error {
-						return opts.Action()
-					}).Once()
+				s.expectSpinnerRun(spinnerMsg)
 			},
 			wantErr: nil,
 		},
@@ -2462,10 +2475,7 @@ func (s *ReleaseTestSuite) Test_checkCIPRsStatus() {
 			repoToPR: func() map[string]*github.PullRequest { return map[string]*github.PullRequest{repo: pr} },
 			setup: func() {
 				s.mockContext.EXPECT().Choice("Check CI status?", choices).Return("Check", nil).Once()
-				s.mockContext.EXPECT().Spinner(spinnerMsg, mock.AnythingOfType("console.SpinnerOption")).
-					RunAndReturn(func(msg string, opts console.SpinnerOption) error {
-						return opts.Action()
-					}).Once()
+				s.expectSpinnerRun(spinnerMsg)
 				s.mockGithub.EXPECT().GetPullRequest(owner, repo, 1).Return(pr, nil).Once()
 				s.mockGithub.EXPECT().GetCheckRunsForRef(owner, repo, "abc123").
 					Return([]*github.CheckRun{
@@ -2479,10 +2489,7 @@ func (s *ReleaseTestSuite) Test_checkCIPRsStatus() {
 			repoToPR: func() map[string]*github.PullRequest { return map[string]*github.PullRequest{repo: pr} },
 			setup: func() {
 				s.mockContext.EXPECT().Choice("Check CI status?", choices).Return("Check", nil).Once()
-				s.mockContext.EXPECT().Spinner(spinnerMsg, mock.AnythingOfType("console.SpinnerOption")).
-					RunAndReturn(func(msg string, opts console.SpinnerOption) error {
-						return opts.Action()
-					}).Once()
+				s.expectSpinnerRun(spinnerMsg)
 				s.mockGithub.EXPECT().GetPullRequest(owner, repo, 1).Return(pr, nil).Once()
 				s.mockGithub.EXPECT().GetCheckRunsForRef(owner, repo, "abc123").
 					Return([]*github.CheckRun{
@@ -2498,12 +2505,41 @@ func (s *ReleaseTestSuite) Test_checkCIPRsStatus() {
 			repoToPR: func() map[string]*github.PullRequest { return map[string]*github.PullRequest{repo: pr} },
 			setup: func() {
 				s.mockContext.EXPECT().Choice("Check CI status?", choices).Return("Check", nil).Once()
-				s.mockContext.EXPECT().Spinner(spinnerMsg, mock.AnythingOfType("console.SpinnerOption")).
-					RunAndReturn(func(msg string, opts console.SpinnerOption) error {
-						return opts.Action()
-					}).Once()
+				s.expectSpinnerRun(spinnerMsg)
 				s.mockGithub.EXPECT().GetPullRequest(owner, repo, 1).Return(pr, nil).Once()
 				s.mockGithub.EXPECT().GetCheckRunsForRef(owner, repo, "abc123").
+					Return([]*github.CheckRun{
+						{Status: convert.Pointer("in_progress")},
+					}, nil).Once()
+
+				s.mockContext.EXPECT().Choice("Check CI status?", choices).Return("Manual Pass", nil).Once()
+			},
+			wantErr: nil,
+		},
+		{
+			name: "passed repo is not checked again on the next round",
+			repoToPR: func() map[string]*github.PullRequest {
+				return map[string]*github.PullRequest{repo: pr, repo2: pr2}
+			},
+			setup: func() {
+				s.mockContext.EXPECT().Choice("Check CI status?", choices).Return("Check", nil).Once()
+				s.expectSpinnerRun(spinnerMsg)
+				s.mockGithub.EXPECT().GetPullRequest(owner, repo, 1).Return(pr, nil).Once()
+				s.mockGithub.EXPECT().GetCheckRunsForRef(owner, repo, "abc123").
+					Return([]*github.CheckRun{
+						{Status: convert.Pointer("completed"), Conclusion: convert.Pointer("success")},
+					}, nil).Once()
+				s.mockGithub.EXPECT().GetPullRequest(owner, repo2, 2).Return(pr2, nil).Once()
+				s.mockGithub.EXPECT().GetCheckRunsForRef(owner, repo2, "def456").
+					Return([]*github.CheckRun{
+						{Status: convert.Pointer("in_progress")},
+					}, nil).Once()
+
+				// fiber is still pending, so only fiber may be queried again.
+				s.mockContext.EXPECT().Choice("Check CI status?", choices).Return("Check", nil).Once()
+				s.expectSpinnerRun(spinnerMsg)
+				s.mockGithub.EXPECT().GetPullRequest(owner, repo2, 2).Return(pr2, nil).Once()
+				s.mockGithub.EXPECT().GetCheckRunsForRef(owner, repo2, "def456").
 					Return([]*github.CheckRun{
 						{Status: convert.Pointer("in_progress")},
 					}, nil).Once()
@@ -2517,10 +2553,7 @@ func (s *ReleaseTestSuite) Test_checkCIPRsStatus() {
 			repoToPR: func() map[string]*github.PullRequest { return map[string]*github.PullRequest{repo: pr} },
 			setup: func() {
 				s.mockContext.EXPECT().Choice("Check CI status?", choices).Return("Check", nil).Once()
-				s.mockContext.EXPECT().Spinner(spinnerMsg, mock.AnythingOfType("console.SpinnerOption")).
-					RunAndReturn(func(msg string, opts console.SpinnerOption) error {
-						return opts.Action()
-					}).Once()
+				s.expectSpinnerRun(spinnerMsg)
 				s.mockGithub.EXPECT().GetPullRequest(owner, repo, 1).
 					Return(&github.PullRequest{
 						Number:  convert.Pointer(1),
@@ -2535,10 +2568,7 @@ func (s *ReleaseTestSuite) Test_checkCIPRsStatus() {
 			repoToPR: func() map[string]*github.PullRequest { return map[string]*github.PullRequest{repo: pr} },
 			setup: func() {
 				s.mockContext.EXPECT().Choice("Check CI status?", choices).Return("Check", nil).Once()
-				s.mockContext.EXPECT().Spinner(spinnerMsg, mock.AnythingOfType("console.SpinnerOption")).
-					RunAndReturn(func(msg string, opts console.SpinnerOption) error {
-						return opts.Action()
-					}).Once()
+				s.expectSpinnerRun(spinnerMsg)
 				s.mockGithub.EXPECT().GetPullRequest(owner, repo, 1).Return(nil, assert.AnError).Once()
 			},
 			wantErr: assert.AnError,
@@ -2548,10 +2578,7 @@ func (s *ReleaseTestSuite) Test_checkCIPRsStatus() {
 			repoToPR: func() map[string]*github.PullRequest { return map[string]*github.PullRequest{repo: pr} },
 			setup: func() {
 				s.mockContext.EXPECT().Choice("Check CI status?", choices).Return("Check", nil).Once()
-				s.mockContext.EXPECT().Spinner(spinnerMsg, mock.AnythingOfType("console.SpinnerOption")).
-					RunAndReturn(func(msg string, opts console.SpinnerOption) error {
-						return opts.Action()
-					}).Once()
+				s.expectSpinnerRun(spinnerMsg)
 				s.mockGithub.EXPECT().GetPullRequest(owner, repo, 1).Return(pr, nil).Once()
 				s.mockGithub.EXPECT().GetCheckRunsForRef(owner, repo, "abc123").Return(nil, assert.AnError).Once()
 			},
@@ -2577,6 +2604,7 @@ func (s *ReleaseTestSuite) Test_updatePRDependencies() {
 		prTitle      = "chore: Upgrade framework to v1.15.1 (auto)"
 		dependencies = []string{"go get github.com/goravel/framework@v1.15.1"}
 		cleanup      = "rm -rf gin"
+		spinnerMsg   = "Updating upgrade PR for gin..."
 		cloneAndMod  = `export GONOSUMDB=github.com/goravel && rm -rf gin && git clone git@github.com:goravel/gin.git &&
 cd gin && git checkout auto-upgrade/v1.15.1 && go get github.com/goravel/framework@v1.15.1 && go mod tidy`
 		checkStatus = "cd gin && git status --porcelain"
@@ -2590,7 +2618,7 @@ cd gin && git checkout auto-upgrade/v1.15.1 && go get github.com/goravel/framewo
 		wantErr error
 	}{
 		{
-			name: "upgrade PR already merged, skip update",
+			name: "real mode - upgrade PR already merged, skip update",
 			real: true,
 			setup: func() {
 				s.mockGithub.EXPECT().GetPullRequests(owner, repo, &github.PullRequestListOptions{
@@ -2608,7 +2636,7 @@ cd gin && git checkout auto-upgrade/v1.15.1 && go get github.com/goravel/framewo
 			wantErr: nil,
 		},
 		{
-			name: "failed to find merged upgrade PR",
+			name: "real mode - failed to find merged upgrade PR",
 			real: true,
 			setup: func() {
 				s.mockGithub.EXPECT().GetPullRequests(owner, repo, &github.PullRequestListOptions{
@@ -2620,31 +2648,28 @@ cd gin && git checkout auto-upgrade/v1.15.1 && go get github.com/goravel/framewo
 			wantErr: assert.AnError,
 		},
 		{
-			name: "preview mode skips update",
+			name: "preview mode - skips update",
 			real: false,
 			setup: func() {
 				s.mockGithub.EXPECT().GetPullRequests(owner, repo, &github.PullRequestListOptions{
 					State: "closed",
 				}).Return([]*github.PullRequest{}, nil).Once()
 
-				s.mockContext.EXPECT().Spinner("Updating upgrade PR for gin...", mock.AnythingOfType("console.SpinnerOption")).
-					RunAndReturn(func(msg string, opts console.SpinnerOption) error {
-						return opts.Action()
-					}).Once()
+				s.expectSpinnerRun(spinnerMsg)
 
 				s.mockProcess.EXPECT().Run(cleanup).Return(nil).Once()
 			},
 			wantErr: nil,
 		},
 		{
-			name: "spinner fails",
+			name: "real mode - spinner fails",
 			real: true,
 			setup: func() {
 				s.mockGithub.EXPECT().GetPullRequests(owner, repo, &github.PullRequestListOptions{
 					State: "closed",
 				}).Return([]*github.PullRequest{}, nil).Once()
 
-				s.mockContext.EXPECT().Spinner("Updating upgrade PR for gin...", mock.AnythingOfType("console.SpinnerOption")).
+				s.mockContext.EXPECT().Spinner(spinnerMsg, mock.AnythingOfType("console.SpinnerOption")).
 					Return(assert.AnError).Once()
 
 				s.mockProcess.EXPECT().Run(cleanup).Return(nil).Once()
@@ -2652,17 +2677,14 @@ cd gin && git checkout auto-upgrade/v1.15.1 && go get github.com/goravel/framewo
 			wantErr: assert.AnError,
 		},
 		{
-			name: "clone and mod fails",
+			name: "real mode - clone and mod fails",
 			real: true,
 			setup: func() {
 				s.mockGithub.EXPECT().GetPullRequests(owner, repo, &github.PullRequestListOptions{
 					State: "closed",
 				}).Return([]*github.PullRequest{}, nil).Once()
 
-				s.mockContext.EXPECT().Spinner("Updating upgrade PR for gin...", mock.AnythingOfType("console.SpinnerOption")).
-					RunAndReturn(func(msg string, opts console.SpinnerOption) error {
-						return opts.Action()
-					}).Once()
+				s.expectSpinnerRun(spinnerMsg)
 
 				mockProcessResult := mocksprocess.NewResult(s.T())
 				mockProcessResult.EXPECT().Failed().Return(true).Once()
@@ -2674,17 +2696,14 @@ cd gin && git checkout auto-upgrade/v1.15.1 && go get github.com/goravel/framewo
 			wantErr: fmt.Errorf("failed to update upgrade PR for gin: %w", assert.AnError),
 		},
 		{
-			name: "failed to check status",
+			name: "real mode - failed to check status",
 			real: true,
 			setup: func() {
 				s.mockGithub.EXPECT().GetPullRequests(owner, repo, &github.PullRequestListOptions{
 					State: "closed",
 				}).Return([]*github.PullRequest{}, nil).Once()
 
-				s.mockContext.EXPECT().Spinner("Updating upgrade PR for gin...", mock.AnythingOfType("console.SpinnerOption")).
-					RunAndReturn(func(msg string, opts console.SpinnerOption) error {
-						return opts.Action()
-					}).Once()
+				s.expectSpinnerRun(spinnerMsg)
 
 				mockProcessResult := mocksprocess.NewResult(s.T())
 				mockProcessResult.EXPECT().Failed().Return(false).Once()
@@ -2700,17 +2719,14 @@ cd gin && git checkout auto-upgrade/v1.15.1 && go get github.com/goravel/framewo
 			wantErr: fmt.Errorf("failed to check status for gin: %w", assert.AnError),
 		},
 		{
-			name: "upgrade PR already up to date, skip push",
+			name: "real mode - upgrade PR already up to date, skip push",
 			real: true,
 			setup: func() {
 				s.mockGithub.EXPECT().GetPullRequests(owner, repo, &github.PullRequestListOptions{
 					State: "closed",
 				}).Return([]*github.PullRequest{}, nil).Once()
 
-				s.mockContext.EXPECT().Spinner("Updating upgrade PR for gin...", mock.AnythingOfType("console.SpinnerOption")).
-					RunAndReturn(func(msg string, opts console.SpinnerOption) error {
-						return opts.Action()
-					}).Once()
+				s.expectSpinnerRun(spinnerMsg)
 
 				mockProcessResult := mocksprocess.NewResult(s.T())
 				mockProcessResult.EXPECT().Failed().Return(false).Once()
@@ -2727,17 +2743,14 @@ cd gin && git checkout auto-upgrade/v1.15.1 && go get github.com/goravel/framewo
 			wantErr: nil,
 		},
 		{
-			name: "whitespace-only porcelain output, skip push",
+			name: "real mode - whitespace-only porcelain output, skip push",
 			real: true,
 			setup: func() {
 				s.mockGithub.EXPECT().GetPullRequests(owner, repo, &github.PullRequestListOptions{
 					State: "closed",
 				}).Return([]*github.PullRequest{}, nil).Once()
 
-				s.mockContext.EXPECT().Spinner("Updating upgrade PR for gin...", mock.AnythingOfType("console.SpinnerOption")).
-					RunAndReturn(func(msg string, opts console.SpinnerOption) error {
-						return opts.Action()
-					}).Once()
+				s.expectSpinnerRun(spinnerMsg)
 
 				mockProcessResult := mocksprocess.NewResult(s.T())
 				mockProcessResult.EXPECT().Failed().Return(false).Once()
@@ -2753,17 +2766,14 @@ cd gin && git checkout auto-upgrade/v1.15.1 && go get github.com/goravel/framewo
 			wantErr: nil,
 		},
 		{
-			name: "push fails",
+			name: "real mode - push fails",
 			real: true,
 			setup: func() {
 				s.mockGithub.EXPECT().GetPullRequests(owner, repo, &github.PullRequestListOptions{
 					State: "closed",
 				}).Return([]*github.PullRequest{}, nil).Once()
 
-				s.mockContext.EXPECT().Spinner("Updating upgrade PR for gin...", mock.AnythingOfType("console.SpinnerOption")).
-					RunAndReturn(func(msg string, opts console.SpinnerOption) error {
-						return opts.Action()
-					}).Once()
+				s.expectSpinnerRun(spinnerMsg)
 
 				mockProcessResult := mocksprocess.NewResult(s.T())
 				mockProcessResult.EXPECT().Failed().Return(false).Once()
@@ -2784,17 +2794,14 @@ cd gin && git checkout auto-upgrade/v1.15.1 && go get github.com/goravel/framewo
 			wantErr: fmt.Errorf("failed to push updated upgrade PR for gin: %w", assert.AnError),
 		},
 		{
-			name: "successful update",
+			name: "real mode - successful update",
 			real: true,
 			setup: func() {
 				s.mockGithub.EXPECT().GetPullRequests(owner, repo, &github.PullRequestListOptions{
 					State: "closed",
 				}).Return([]*github.PullRequest{}, nil).Once()
 
-				s.mockContext.EXPECT().Spinner("Updating upgrade PR for gin...", mock.AnythingOfType("console.SpinnerOption")).
-					RunAndReturn(func(msg string, opts console.SpinnerOption) error {
-						return opts.Action()
-					}).Once()
+				s.expectSpinnerRun(spinnerMsg)
 
 				mockProcessResult := mocksprocess.NewResult(s.T())
 				mockProcessResult.EXPECT().Failed().Return(false).Once()

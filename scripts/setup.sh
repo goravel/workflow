@@ -4,7 +4,7 @@
 #
 # Installs the external services the app and its agent tooling reach for, then
 # writes the shared config files only when a key, a folder or a project is
-# missing. It never touches the repo: no database/, no storage/, no migrate.
+# missing. It creates no database/, no storage/, and runs no migrate.
 #
 #   brew      Homebrew, the only package source for gh, the Docker tools, uv and
 #             the paseo cask
@@ -53,8 +53,8 @@ opencode and paseo, then writes the ~/.config/opencode entries
 paseo project AGENT_PROJECT_NAME names.
 
 Every step skips itself when its target is already there; `go mod download`
-always runs because a warm cache makes it a no-op. Nothing is written inside
-the repo.
+always runs because a warm cache makes it a no-op. Inside the repo the only
+writes are .env and artisan's own log.
 
 Options:
   -y, --yes       accept everything (already the default)
@@ -176,6 +176,8 @@ ensure_homebrew() {
 
   if command -v brew >/dev/null 2>&1; then
     ok "brew $(brew --version | head -1 | awk '{print $2}') at $(command -v brew)"
+  elif [ -x /opt/homebrew/bin/brew ] || [ -x /usr/local/bin/brew ]; then
+    ok "brew installed outside PATH"
   else
     sh_run 'NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"' \
       || { fail "Homebrew install"; return 0; }
@@ -256,6 +258,17 @@ ensure_go() {
     ok "go ${stable} in $GO_ROOT"
   else
     fail "go is still missing or below $GO_FLOOR after install"
+    return 0
+  fi
+
+  # The tarball lands outside every shell's PATH: record it for new terminals,
+  # or the `go run .` in Next: fails as soon as this process exits.
+  if grep -qF "$GO_ROOT/bin" "$HOME/.zprofile" 2>/dev/null; then
+    skip "$GO_ROOT/bin already in ~/.zprofile"
+  elif printf 'export PATH="%s/bin:$PATH"\n' "$GO_ROOT" >> "$HOME/.zprofile" 2>/dev/null; then
+    ok "added $GO_ROOT/bin to ~/.zprofile"
+  else
+    warn "add this to your shell profile: export PATH=\"$GO_ROOT/bin:\$PATH\""
   fi
 }
 
@@ -311,6 +324,8 @@ ensure_docker() {
       mkdir -p "$HOME/.docker/cli-plugins"
       ln -sfn "$compose_bin" "$HOME/.docker/cli-plugins/docker-compose"
       ok "linked docker compose plugin into ~/.docker/cli-plugins"
+    else
+      warn "no compose plugin at $compose_bin, \`docker compose\` stays unavailable"
     fi
   fi
 
@@ -449,7 +464,14 @@ except json.JSONDecodeError as exc:
 if not isinstance(data, dict):
     sys.exit("not a JSON object")
 
-servers = data.setdefault("mcp", {}).setdefault("servers", {})
+mcp = data.setdefault("mcp", {})
+if not isinstance(mcp, dict):
+    sys.exit("mcp is not an object")
+
+servers = mcp.setdefault("servers", {})
+if not isinstance(servers, dict):
+    sys.exit("mcp.servers is not an object")
+
 if "code-review-graph" in servers:
     print("present")
     sys.exit(0)
@@ -470,7 +492,7 @@ else:
 os.replace(tmp, path)
 print("merged")
 PY
-  ) || { fail "$OPENCODE_CONFIG is not valid JSON, left untouched"; return 0; }
+  ) || { fail "could not merge into $OPENCODE_CONFIG, left untouched"; return 0; }
 
   case "$result" in
     present) skip "mcp.servers[\"code-review-graph\"] already there" ;;
@@ -481,6 +503,11 @@ PY
 
 ensure_agents_and_skills() {
   section "agents and skills (~/.config/opencode)"
+
+  if [ -f "$OPENCODE_AGENTS/ship.md" ] && [ -f "$OPENCODE_SKILLS/goravel-planning/SKILL.md" ]; then
+    skip "agents and skills already in ~/.config/opencode"
+    return 0
+  fi
 
   if [ "$DRY_RUN" -eq 1 ]; then
     plan "git clone --depth 1 $AGENTS_REPO: agents/ -> $OPENCODE_AGENTS, skills/ -> $OPENCODE_SKILLS"
@@ -493,17 +520,23 @@ ensure_agents_and_skills() {
 
   if git clone --depth 1 -q "https://github.com/$AGENTS_REPO.git" "$tmp/agents"; then
     mkdir -p "$OPENCODE_AGENTS" "$OPENCODE_SKILLS"
-    rsync -a "$tmp/agents/agents/" "$OPENCODE_AGENTS/"
-    rsync -a "$tmp/agents/skills/" "$OPENCODE_SKILLS/"
-    ok "agents and skills from $AGENTS_REPO"
+    if rsync -a "$tmp/agents/agents/" "$OPENCODE_AGENTS/" \
+      && rsync -a "$tmp/agents/skills/" "$OPENCODE_SKILLS/"; then
+      ok "agents and skills from $AGENTS_REPO"
+    else
+      fail "copy agents and skills from $AGENTS_REPO"
+    fi
   else
     fail "clone $AGENTS_REPO"
   fi
 
   if git clone --depth 1 -q "https://github.com/$SKILLS_REPO.git" "$tmp/skills"; then
     mkdir -p "$OPENCODE_SKILLS"
-    rsync -a "$tmp/skills/skills/" "$OPENCODE_SKILLS/"
-    ok "skills from $SKILLS_REPO"
+    if rsync -a "$tmp/skills/skills/" "$OPENCODE_SKILLS/"; then
+      ok "skills from $SKILLS_REPO"
+    else
+      fail "copy skills from $SKILLS_REPO"
+    fi
   else
     fail "clone $SKILLS_REPO"
   fi

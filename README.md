@@ -59,7 +59,7 @@ The command will release the patch version for framework and example, goravel-li
 ./artisan patch v1.15.1
 
 # Real release
-./artisan patch v1.15.1 --real
+./artisan patch v1.15.1 -p gin@v1.15.1,fiber@v1.15.1 --real
 ```
 
 ## Testing

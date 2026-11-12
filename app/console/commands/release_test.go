@@ -2418,6 +2418,11 @@ func (s *ReleaseTestSuite) Test_checkCIPRsStatus() {
 			HTMLURL: convert.Pointer("https://github.com/goravel/fiber/pull/2"),
 			Head:    &github.PullRequestBranch{SHA: convert.Pointer("def456")},
 		}
+		refreshed = &github.PullRequest{
+			Number:  convert.Pointer(2),
+			HTMLURL: convert.Pointer("https://github.com/goravel/fiber/pull/2"),
+			Head:    &github.PullRequestBranch{SHA: convert.Pointer("def789")},
+		}
 		choices = []console.Choice{
 			{
 				Key:   "Check",
@@ -2432,10 +2437,11 @@ func (s *ReleaseTestSuite) Test_checkCIPRsStatus() {
 	)
 
 	tests := []struct {
-		name     string
-		repoToPR func() map[string]*github.PullRequest
-		setup    func()
-		wantErr  error
+		name         string
+		repoToPR     func() map[string]*github.PullRequest
+		setup        func()
+		wantErr      error
+		wantRepoToPR map[string]*github.PullRequest
 	}{
 		{
 			name:     "manual pass returns nil without checking",
@@ -2529,17 +2535,17 @@ func (s *ReleaseTestSuite) Test_checkCIPRsStatus() {
 					Return([]*github.CheckRun{
 						{Status: convert.Pointer("completed"), Conclusion: convert.Pointer("success")},
 					}, nil).Once()
-				s.mockGithub.EXPECT().GetPullRequest(owner, repo2, 2).Return(pr2, nil).Once()
-				s.mockGithub.EXPECT().GetCheckRunsForRef(owner, repo2, "def456").
+				s.mockGithub.EXPECT().GetPullRequest(owner, repo2, 2).Return(refreshed, nil).Once()
+				s.mockGithub.EXPECT().GetCheckRunsForRef(owner, repo2, "def789").
 					Return([]*github.CheckRun{
 						{Status: convert.Pointer("in_progress")},
 					}, nil).Once()
 
-				// fiber is still pending, so only fiber may be queried again.
+				// fiber is still pending, so only fiber may be queried again, on the refreshed head.
 				s.mockContext.EXPECT().Choice("Check CI status?", choices).Return("Check", nil).Once()
 				s.expectSpinnerRun(spinnerMsg)
-				s.mockGithub.EXPECT().GetPullRequest(owner, repo2, 2).Return(pr2, nil).Once()
-				s.mockGithub.EXPECT().GetCheckRunsForRef(owner, repo2, "def456").
+				s.mockGithub.EXPECT().GetPullRequest(owner, repo2, 2).Return(refreshed, nil).Once()
+				s.mockGithub.EXPECT().GetCheckRunsForRef(owner, repo2, "def789").
 					Return([]*github.CheckRun{
 						{Status: convert.Pointer("in_progress")},
 					}, nil).Once()
@@ -2547,6 +2553,10 @@ func (s *ReleaseTestSuite) Test_checkCIPRsStatus() {
 				s.mockContext.EXPECT().Choice("Check CI status?", choices).Return("Manual Pass", nil).Once()
 			},
 			wantErr: nil,
+			wantRepoToPR: map[string]*github.PullRequest{
+				repo:  pr,
+				repo2: refreshed,
+			},
 		},
 		{
 			name:     "pr without head sha is not counted as failing",
@@ -2590,9 +2600,13 @@ func (s *ReleaseTestSuite) Test_checkCIPRsStatus() {
 		s.Run(tt.name, func() {
 			tt.setup()
 
-			err := s.release.checkCIPRsStatus(tt.repoToPR())
+			repoToPR := tt.repoToPR()
+			err := s.release.checkCIPRsStatus(repoToPR)
 
 			s.Equal(tt.wantErr, err)
+			if tt.wantRepoToPR != nil {
+				s.Equal(tt.wantRepoToPR, repoToPR)
+			}
 		})
 	}
 }

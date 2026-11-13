@@ -3,6 +3,7 @@ package commands
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"sort"
 	"strings"
@@ -367,6 +368,10 @@ func (r *Release) checkCIPRsStatus(repoToPR map[string]*github.PullRequest) erro
 				Key:   "Check",
 				Value: "Check",
 			},
+			{
+				Key:   "Manual Pass",
+				Value: "Manual Pass",
+			},
 		})
 		if err != nil {
 			return err
@@ -380,8 +385,16 @@ func (r *Release) checkCIPRsStatus(repoToPR map[string]*github.PullRequest) erro
 
 			if err := r.ctx.Spinner("Checking CI status for all repos...", console.SpinnerOption{
 				Action: func() error {
-					for repo, pr := range repoToPR {
-						if pr == nil || passed[repo] {
+					// Range a copy: the goroutines below refresh repoToPR with the latest PRs.
+					for repo, pr := range maps.Clone(repoToPR) {
+						if pr == nil {
+							continue
+						}
+
+						mu.Lock()
+						skip := passed[repo]
+						mu.Unlock()
+						if skip {
 							continue
 						}
 
@@ -445,6 +458,9 @@ func (r *Release) checkCIPRsStatus(repoToPR map[string]*github.PullRequest) erro
 				color.Yellow().Println(fmt.Sprintf("Not passed CI: %s", strings.Join(notPassed, ", ")))
 			}
 		}
+		if choice == "Manual Pass" {
+			return nil
+		}
 	}
 }
 
@@ -504,6 +520,13 @@ cd %s && git checkout auto-upgrade/%s && %s && go mod tidy`,
 				return fmt.Errorf("failed to update upgrade PR for %s: %w", repo, res.Error())
 			}
 
+			if res := facades.Process().Run(fmt.Sprintf(`cd %s && git status --porcelain`, repo)); res.Failed() {
+				return fmt.Errorf("failed to check status for %s: %w", repo, res.Error())
+			} else if strings.TrimSpace(res.Output()) == "" {
+				color.Yellow().Println(fmt.Sprintf("[%s/%s] upgrade PR already up to date, skip update", owner, repo))
+				return nil
+			}
+
 			commandToPush := fmt.Sprintf(`cd %s && git add . && git commit -m "%s" && git push origin auto-upgrade/%s -f`,
 				repo, prTitle, tag)
 			if res := facades.Process().Run(commandToPush); res.Failed() {
@@ -526,6 +549,10 @@ func (r *Release) checkGoravelAutoUpgradePRMergeStatus(ctx console.Context) bool
 }
 
 func (r *Release) checkPRsMergeStatus(repoToPR map[string]*github.PullRequest) error {
+	if len(repoToPR) == 0 {
+		return nil
+	}
+
 	for pkg, pr := range repoToPR {
 		if pr == nil {
 			color.Black().Println(fmt.Sprintf("%-10s: no need to upgrade", pkg))

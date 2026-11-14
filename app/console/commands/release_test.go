@@ -165,6 +165,12 @@ func (s *ReleaseTestSuite) Test_checkPRsMergeStatus() {
 		}
 	}
 
+	// No Choice expectation on purpose: an empty map must return before prompting.
+	s.Run("empty map returns immediately", func() {
+		s.NoError(s.release.checkPRsMergeStatus(map[string]*github.PullRequest{}))
+		s.NoError(s.release.checkPRsMergeStatus(nil))
+	})
+
 	tests := []struct {
 		name    string
 		setup   func()
@@ -2382,6 +2388,460 @@ func (s *ReleaseTestSuite) Test_triggerExampleAICI() {
 			tt.setup()
 
 			err := s.release.triggerExampleAICI(tt.pr)
+
+			s.Equal(tt.wantErr, err)
+		})
+	}
+}
+
+// expectSpinnerRun stubs a spinner that runs its action inline.
+func (s *ReleaseTestSuite) expectSpinnerRun(msg string) {
+	s.T().Helper()
+
+	s.mockContext.EXPECT().Spinner(msg, mock.AnythingOfType("console.SpinnerOption")).
+		RunAndReturn(func(msg string, opts console.SpinnerOption) error {
+			return opts.Action()
+		}).Once()
+}
+
+func (s *ReleaseTestSuite) Test_checkCIPRsStatus() {
+	var (
+		repo  = "gin"
+		repo2 = "fiber"
+		pr    = &github.PullRequest{
+			Number:  convert.Pointer(1),
+			HTMLURL: convert.Pointer("https://github.com/goravel/gin/pull/1"),
+			Head:    &github.PullRequestBranch{SHA: convert.Pointer("abc123")},
+		}
+		pr2 = &github.PullRequest{
+			Number:  convert.Pointer(2),
+			HTMLURL: convert.Pointer("https://github.com/goravel/fiber/pull/2"),
+			Head:    &github.PullRequestBranch{SHA: convert.Pointer("def456")},
+		}
+		refreshed = &github.PullRequest{
+			Number:  convert.Pointer(2),
+			HTMLURL: convert.Pointer("https://github.com/goravel/fiber/pull/2"),
+			Head:    &github.PullRequestBranch{SHA: convert.Pointer("def789")},
+		}
+		choices = []console.Choice{
+			{
+				Key:   "Check",
+				Value: "Check",
+			},
+			{
+				Key:   "Manual Pass",
+				Value: "Manual Pass",
+			},
+		}
+		spinnerMsg = "Checking CI status for all repos..."
+	)
+
+	tests := []struct {
+		name         string
+		repoToPR     func() map[string]*github.PullRequest
+		setup        func()
+		wantErr      error
+		wantRepoToPR map[string]*github.PullRequest
+	}{
+		{
+			name:     "manual pass returns nil without checking",
+			repoToPR: func() map[string]*github.PullRequest { return map[string]*github.PullRequest{repo: pr} },
+			setup: func() {
+				s.mockContext.EXPECT().Choice("Check CI status?", choices).Return("Manual Pass", nil).Once()
+			},
+			wantErr: nil,
+		},
+		{
+			name:     "choice fails",
+			repoToPR: func() map[string]*github.PullRequest { return map[string]*github.PullRequest{repo: pr} },
+			setup: func() {
+				s.mockContext.EXPECT().Choice("Check CI status?", choices).Return("", assert.AnError).Once()
+			},
+			wantErr: assert.AnError,
+		},
+		{
+			name:     "nil pr is skipped, then manual pass",
+			repoToPR: func() map[string]*github.PullRequest { return map[string]*github.PullRequest{repo: nil} },
+			setup: func() {
+				s.mockContext.EXPECT().Choice("Check CI status?", choices).Return("Manual Pass", nil).Once()
+			},
+			wantErr: nil,
+		},
+		{
+			name:     "nil pr is skipped during check",
+			repoToPR: func() map[string]*github.PullRequest { return map[string]*github.PullRequest{repo: nil} },
+			setup: func() {
+				s.mockContext.EXPECT().Choice("Check CI status?", choices).Return("Check", nil).Once()
+				s.expectSpinnerRun(spinnerMsg)
+			},
+			wantErr: nil,
+		},
+		{
+			name:     "all check runs completed",
+			repoToPR: func() map[string]*github.PullRequest { return map[string]*github.PullRequest{repo: pr} },
+			setup: func() {
+				s.mockContext.EXPECT().Choice("Check CI status?", choices).Return("Check", nil).Once()
+				s.expectSpinnerRun(spinnerMsg)
+				s.mockGithub.EXPECT().GetPullRequest(owner, repo, 1).Return(pr, nil).Once()
+				s.mockGithub.EXPECT().GetCheckRunsForRef(owner, repo, "abc123").
+					Return([]*github.CheckRun{
+						{Status: convert.Pointer("completed"), Conclusion: convert.Pointer("success")},
+					}, nil).Once()
+			},
+			wantErr: nil,
+		},
+		{
+			name:     "failed check run, then manual pass",
+			repoToPR: func() map[string]*github.PullRequest { return map[string]*github.PullRequest{repo: pr} },
+			setup: func() {
+				s.mockContext.EXPECT().Choice("Check CI status?", choices).Return("Check", nil).Once()
+				s.expectSpinnerRun(spinnerMsg)
+				s.mockGithub.EXPECT().GetPullRequest(owner, repo, 1).Return(pr, nil).Once()
+				s.mockGithub.EXPECT().GetCheckRunsForRef(owner, repo, "abc123").
+					Return([]*github.CheckRun{
+						{Status: convert.Pointer("completed"), Conclusion: convert.Pointer("failure")},
+					}, nil).Once()
+
+				s.mockContext.EXPECT().Choice("Check CI status?", choices).Return("Manual Pass", nil).Once()
+			},
+			wantErr: nil,
+		},
+		{
+			name:     "pending check run, then manual pass",
+			repoToPR: func() map[string]*github.PullRequest { return map[string]*github.PullRequest{repo: pr} },
+			setup: func() {
+				s.mockContext.EXPECT().Choice("Check CI status?", choices).Return("Check", nil).Once()
+				s.expectSpinnerRun(spinnerMsg)
+				s.mockGithub.EXPECT().GetPullRequest(owner, repo, 1).Return(pr, nil).Once()
+				s.mockGithub.EXPECT().GetCheckRunsForRef(owner, repo, "abc123").
+					Return([]*github.CheckRun{
+						{Status: convert.Pointer("in_progress")},
+					}, nil).Once()
+
+				s.mockContext.EXPECT().Choice("Check CI status?", choices).Return("Manual Pass", nil).Once()
+			},
+			wantErr: nil,
+		},
+		{
+			name: "passed repo is not checked again on the next round",
+			repoToPR: func() map[string]*github.PullRequest {
+				return map[string]*github.PullRequest{repo: pr, repo2: pr2}
+			},
+			setup: func() {
+				s.mockContext.EXPECT().Choice("Check CI status?", choices).Return("Check", nil).Once()
+				s.expectSpinnerRun(spinnerMsg)
+				s.mockGithub.EXPECT().GetPullRequest(owner, repo, 1).Return(pr, nil).Once()
+				s.mockGithub.EXPECT().GetCheckRunsForRef(owner, repo, "abc123").
+					Return([]*github.CheckRun{
+						{Status: convert.Pointer("completed"), Conclusion: convert.Pointer("success")},
+					}, nil).Once()
+				s.mockGithub.EXPECT().GetPullRequest(owner, repo2, 2).Return(refreshed, nil).Once()
+				s.mockGithub.EXPECT().GetCheckRunsForRef(owner, repo2, "def789").
+					Return([]*github.CheckRun{
+						{Status: convert.Pointer("in_progress")},
+					}, nil).Once()
+
+				// fiber is still pending, so only fiber may be queried again, on the refreshed head.
+				s.mockContext.EXPECT().Choice("Check CI status?", choices).Return("Check", nil).Once()
+				s.expectSpinnerRun(spinnerMsg)
+				s.mockGithub.EXPECT().GetPullRequest(owner, repo2, 2).Return(refreshed, nil).Once()
+				s.mockGithub.EXPECT().GetCheckRunsForRef(owner, repo2, "def789").
+					Return([]*github.CheckRun{
+						{Status: convert.Pointer("in_progress")},
+					}, nil).Once()
+
+				s.mockContext.EXPECT().Choice("Check CI status?", choices).Return("Manual Pass", nil).Once()
+			},
+			wantErr: nil,
+			wantRepoToPR: map[string]*github.PullRequest{
+				repo:  pr,
+				repo2: refreshed,
+			},
+		},
+		{
+			name:     "pr without head sha is not counted as failing",
+			repoToPR: func() map[string]*github.PullRequest { return map[string]*github.PullRequest{repo: pr} },
+			setup: func() {
+				s.mockContext.EXPECT().Choice("Check CI status?", choices).Return("Check", nil).Once()
+				s.expectSpinnerRun(spinnerMsg)
+				s.mockGithub.EXPECT().GetPullRequest(owner, repo, 1).
+					Return(&github.PullRequest{
+						Number:  convert.Pointer(1),
+						HTMLURL: convert.Pointer("https://github.com/goravel/gin/pull/1"),
+						Head:    nil,
+					}, nil).Once()
+			},
+			wantErr: nil,
+		},
+		{
+			name:     "failed to get pull request",
+			repoToPR: func() map[string]*github.PullRequest { return map[string]*github.PullRequest{repo: pr} },
+			setup: func() {
+				s.mockContext.EXPECT().Choice("Check CI status?", choices).Return("Check", nil).Once()
+				s.expectSpinnerRun(spinnerMsg)
+				s.mockGithub.EXPECT().GetPullRequest(owner, repo, 1).Return(nil, assert.AnError).Once()
+			},
+			wantErr: assert.AnError,
+		},
+		{
+			name:     "failed to get check runs",
+			repoToPR: func() map[string]*github.PullRequest { return map[string]*github.PullRequest{repo: pr} },
+			setup: func() {
+				s.mockContext.EXPECT().Choice("Check CI status?", choices).Return("Check", nil).Once()
+				s.expectSpinnerRun(spinnerMsg)
+				s.mockGithub.EXPECT().GetPullRequest(owner, repo, 1).Return(pr, nil).Once()
+				s.mockGithub.EXPECT().GetCheckRunsForRef(owner, repo, "abc123").Return(nil, assert.AnError).Once()
+			},
+			wantErr: assert.AnError,
+		},
+	}
+
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			tt.setup()
+
+			repoToPR := tt.repoToPR()
+			err := s.release.checkCIPRsStatus(repoToPR)
+
+			s.Equal(tt.wantErr, err)
+			if tt.wantRepoToPR != nil {
+				s.Equal(tt.wantRepoToPR, repoToPR)
+			}
+		})
+	}
+}
+
+func (s *ReleaseTestSuite) Test_updatePRDependencies() {
+	var (
+		repo         = "gin"
+		tag          = "v1.15.1"
+		prTitle      = "chore: Upgrade framework to v1.15.1 (auto)"
+		dependencies = []string{"go get github.com/goravel/framework@v1.15.1"}
+		cleanup      = "rm -rf gin"
+		spinnerMsg   = "Updating upgrade PR for gin..."
+		cloneAndMod  = `export GONOSUMDB=github.com/goravel && rm -rf gin && git clone git@github.com:goravel/gin.git &&
+cd gin && git checkout auto-upgrade/v1.15.1 && go get github.com/goravel/framework@v1.15.1 && go mod tidy`
+		checkStatus = "cd gin && git status --porcelain"
+		push        = `cd gin && git add . && git commit -m "chore: Upgrade framework to v1.15.1 (auto)" && git push origin auto-upgrade/v1.15.1 -f`
+	)
+
+	tests := []struct {
+		name    string
+		real    bool
+		setup   func()
+		wantErr error
+	}{
+		{
+			name: "real mode - upgrade PR already merged, skip update",
+			real: true,
+			setup: func() {
+				s.mockGithub.EXPECT().GetPullRequests(owner, repo, &github.PullRequestListOptions{
+					State: "closed",
+				}).Return([]*github.PullRequest{
+					{
+						Title:    convert.Pointer(prTitle),
+						HTMLURL:  convert.Pointer("https://github.com/goravel/gin/pull/100"),
+						MergedAt: &github.Timestamp{},
+					},
+				}, nil).Once()
+
+				s.mockProcess.EXPECT().Run(cleanup).Return(nil).Once()
+			},
+			wantErr: nil,
+		},
+		{
+			name: "real mode - failed to find merged upgrade PR",
+			real: true,
+			setup: func() {
+				s.mockGithub.EXPECT().GetPullRequests(owner, repo, &github.PullRequestListOptions{
+					State: "closed",
+				}).Return(nil, assert.AnError).Once()
+
+				s.mockProcess.EXPECT().Run(cleanup).Return(nil).Once()
+			},
+			wantErr: assert.AnError,
+		},
+		{
+			name: "preview mode - skips update",
+			real: false,
+			setup: func() {
+				s.mockGithub.EXPECT().GetPullRequests(owner, repo, &github.PullRequestListOptions{
+					State: "closed",
+				}).Return([]*github.PullRequest{}, nil).Once()
+
+				s.expectSpinnerRun(spinnerMsg)
+
+				s.mockProcess.EXPECT().Run(cleanup).Return(nil).Once()
+			},
+			wantErr: nil,
+		},
+		{
+			name: "real mode - spinner fails",
+			real: true,
+			setup: func() {
+				s.mockGithub.EXPECT().GetPullRequests(owner, repo, &github.PullRequestListOptions{
+					State: "closed",
+				}).Return([]*github.PullRequest{}, nil).Once()
+
+				s.mockContext.EXPECT().Spinner(spinnerMsg, mock.AnythingOfType("console.SpinnerOption")).
+					Return(assert.AnError).Once()
+
+				s.mockProcess.EXPECT().Run(cleanup).Return(nil).Once()
+			},
+			wantErr: assert.AnError,
+		},
+		{
+			name: "real mode - clone and mod fails",
+			real: true,
+			setup: func() {
+				s.mockGithub.EXPECT().GetPullRequests(owner, repo, &github.PullRequestListOptions{
+					State: "closed",
+				}).Return([]*github.PullRequest{}, nil).Once()
+
+				s.expectSpinnerRun(spinnerMsg)
+
+				mockProcessResult := mocksprocess.NewResult(s.T())
+				mockProcessResult.EXPECT().Failed().Return(true).Once()
+				mockProcessResult.EXPECT().Error().Return(assert.AnError).Once()
+				s.mockProcess.EXPECT().Run(cloneAndMod).Return(mockProcessResult).Once()
+
+				s.mockProcess.EXPECT().Run(cleanup).Return(nil).Once()
+			},
+			wantErr: fmt.Errorf("failed to update upgrade PR for gin: %w", assert.AnError),
+		},
+		{
+			name: "real mode - failed to check status",
+			real: true,
+			setup: func() {
+				s.mockGithub.EXPECT().GetPullRequests(owner, repo, &github.PullRequestListOptions{
+					State: "closed",
+				}).Return([]*github.PullRequest{}, nil).Once()
+
+				s.expectSpinnerRun(spinnerMsg)
+
+				mockProcessResult := mocksprocess.NewResult(s.T())
+				mockProcessResult.EXPECT().Failed().Return(false).Once()
+				s.mockProcess.EXPECT().Run(cloneAndMod).Return(mockProcessResult).Once()
+
+				mockProcessResult = mocksprocess.NewResult(s.T())
+				mockProcessResult.EXPECT().Failed().Return(true).Once()
+				mockProcessResult.EXPECT().Error().Return(assert.AnError).Once()
+				s.mockProcess.EXPECT().Run(checkStatus).Return(mockProcessResult).Once()
+
+				s.mockProcess.EXPECT().Run(cleanup).Return(nil).Once()
+			},
+			wantErr: fmt.Errorf("failed to check status for gin: %w", assert.AnError),
+		},
+		{
+			name: "real mode - upgrade PR already up to date, skip push",
+			real: true,
+			setup: func() {
+				s.mockGithub.EXPECT().GetPullRequests(owner, repo, &github.PullRequestListOptions{
+					State: "closed",
+				}).Return([]*github.PullRequest{}, nil).Once()
+
+				s.expectSpinnerRun(spinnerMsg)
+
+				mockProcessResult := mocksprocess.NewResult(s.T())
+				mockProcessResult.EXPECT().Failed().Return(false).Once()
+				s.mockProcess.EXPECT().Run(cloneAndMod).Return(mockProcessResult).Once()
+
+				mockProcessResult = mocksprocess.NewResult(s.T())
+				mockProcessResult.EXPECT().Failed().Return(false).Once()
+				mockProcessResult.EXPECT().Output().Return("").Once()
+				s.mockProcess.EXPECT().Run(checkStatus).Return(mockProcessResult).Once()
+
+				// No push expectation: an unexpected Run would panic the mock.
+				s.mockProcess.EXPECT().Run(cleanup).Return(nil).Once()
+			},
+			wantErr: nil,
+		},
+		{
+			name: "real mode - whitespace-only porcelain output, skip push",
+			real: true,
+			setup: func() {
+				s.mockGithub.EXPECT().GetPullRequests(owner, repo, &github.PullRequestListOptions{
+					State: "closed",
+				}).Return([]*github.PullRequest{}, nil).Once()
+
+				s.expectSpinnerRun(spinnerMsg)
+
+				mockProcessResult := mocksprocess.NewResult(s.T())
+				mockProcessResult.EXPECT().Failed().Return(false).Once()
+				s.mockProcess.EXPECT().Run(cloneAndMod).Return(mockProcessResult).Once()
+
+				mockProcessResult = mocksprocess.NewResult(s.T())
+				mockProcessResult.EXPECT().Failed().Return(false).Once()
+				mockProcessResult.EXPECT().Output().Return(" \n").Once()
+				s.mockProcess.EXPECT().Run(checkStatus).Return(mockProcessResult).Once()
+
+				s.mockProcess.EXPECT().Run(cleanup).Return(nil).Once()
+			},
+			wantErr: nil,
+		},
+		{
+			name: "real mode - push fails",
+			real: true,
+			setup: func() {
+				s.mockGithub.EXPECT().GetPullRequests(owner, repo, &github.PullRequestListOptions{
+					State: "closed",
+				}).Return([]*github.PullRequest{}, nil).Once()
+
+				s.expectSpinnerRun(spinnerMsg)
+
+				mockProcessResult := mocksprocess.NewResult(s.T())
+				mockProcessResult.EXPECT().Failed().Return(false).Once()
+				s.mockProcess.EXPECT().Run(cloneAndMod).Return(mockProcessResult).Once()
+
+				mockProcessResult = mocksprocess.NewResult(s.T())
+				mockProcessResult.EXPECT().Failed().Return(false).Once()
+				mockProcessResult.EXPECT().Output().Return("M go.mod").Once()
+				s.mockProcess.EXPECT().Run(checkStatus).Return(mockProcessResult).Once()
+
+				mockProcessResult = mocksprocess.NewResult(s.T())
+				mockProcessResult.EXPECT().Failed().Return(true).Once()
+				mockProcessResult.EXPECT().Error().Return(assert.AnError).Once()
+				s.mockProcess.EXPECT().Run(push).Return(mockProcessResult).Once()
+
+				s.mockProcess.EXPECT().Run(cleanup).Return(nil).Once()
+			},
+			wantErr: fmt.Errorf("failed to push updated upgrade PR for gin: %w", assert.AnError),
+		},
+		{
+			name: "real mode - successful update",
+			real: true,
+			setup: func() {
+				s.mockGithub.EXPECT().GetPullRequests(owner, repo, &github.PullRequestListOptions{
+					State: "closed",
+				}).Return([]*github.PullRequest{}, nil).Once()
+
+				s.expectSpinnerRun(spinnerMsg)
+
+				mockProcessResult := mocksprocess.NewResult(s.T())
+				mockProcessResult.EXPECT().Failed().Return(false).Once()
+				s.mockProcess.EXPECT().Run(cloneAndMod).Return(mockProcessResult).Once()
+
+				mockProcessResult = mocksprocess.NewResult(s.T())
+				mockProcessResult.EXPECT().Failed().Return(false).Once()
+				mockProcessResult.EXPECT().Output().Return("M go.mod\nM go.sum").Once()
+				s.mockProcess.EXPECT().Run(checkStatus).Return(mockProcessResult).Once()
+
+				mockProcessResult = mocksprocess.NewResult(s.T())
+				mockProcessResult.EXPECT().Failed().Return(false).Once()
+				s.mockProcess.EXPECT().Run(push).Return(mockProcessResult).Once()
+
+				s.mockProcess.EXPECT().Run(cleanup).Return(nil).Once()
+			},
+			wantErr: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.release.real = tt.real
+			tt.setup()
+
+			err := s.release.updatePRDependencies(repo, tag, dependencies)
 
 			s.Equal(tt.wantErr, err)
 		})

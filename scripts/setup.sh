@@ -4,7 +4,8 @@
 #
 # Installs the external services the app and its agent tooling reach for, then
 # writes the shared config files only when a key, a folder or a project is
-# missing. It creates no database/, no storage/, and runs no migrate.
+# missing. It creates no database/ and runs no migrate; artisan writes only
+# its log under storage/logs.
 #
 #   gh        GitHub CLI, for the release commands and the mention poller
 #   uv/uvx    the code-review-graph MCP server runs as ["uvx", "code-review-graph", "serve"]
@@ -14,8 +15,9 @@
 #   repo      .env with an APP_KEY
 #
 # Prerequisites this script checks but never installs: macOS, the Xcode Command
-# Line Tools, Homebrew (gh, uv, opencode and the paseo cask all come from it)
-# and Go 1.26+ from go.mod (./artisan key:generate runs the app).
+# Line Tools and Homebrew (gh, uv, opencode and the paseo cask all come from
+# it). Go 1.26+ from go.mod is required too, but only ./artisan key:generate
+# and go run . need it, so it shows up there rather than up front.
 #
 # macOS only, non-interactive, macOS /bin/bash 3.2: no associative arrays, no
 # mapfile, no ${var,,}, no sort -V, no jq.
@@ -426,13 +428,11 @@ ensure_agents_and_skills() {
     return 0
   fi
 
+  # The real run clones both repos and copies both trees whenever either marker
+  # is missing, so the preview names both copies.
   if [ "$DRY_RUN" -eq 1 ]; then
-    if [ "$need_agents" -eq 1 ]; then
-      todo "agents" "would clone $AGENTS_REPO and copy agents/ -> $OPENCODE_AGENTS"
-    fi
-    if [ "$need_skills" -eq 1 ]; then
-      todo "skills" "would clone $AGENTS_REPO and $SKILLS_REPO and copy skills/ -> $OPENCODE_SKILLS"
-    fi
+    todo "agents" "would clone $AGENTS_REPO and copy agents/ -> $OPENCODE_AGENTS"
+    todo "skills" "would clone $AGENTS_REPO and $SKILLS_REPO and copy skills/ -> $OPENCODE_SKILLS"
     return 0
   fi
 
@@ -585,10 +585,9 @@ verify() {
     fail "paseo daemon" "not running"
   fi
 
-  local name dir found
+  local name found
   name=$(env_value AGENT_PROJECT_NAME)
   [ -n "$name" ] || name=$(sed -n 's/^AGENT_PROJECT_NAME=//p' .env.example | head -1)
-  dir="$HOME/code/$name"
   if found=$(paseo_project_path "$name"); then
     show "paseo project" "$name at $found"
   else

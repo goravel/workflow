@@ -22,7 +22,7 @@
 # macOS only, non-interactive, macOS /bin/bash 3.2: no associative arrays, no
 # mapfile, no ${var,,}, no sort -V, no jq.
 #
-# Usage: scripts/setup.sh [-y|--yes] [-n|--dry-run] [-h|--help]
+# Usage: scripts/setup.sh [--dry-run] [-h|--help]
 
 set -uo pipefail
 
@@ -64,8 +64,7 @@ there, or names the one change it would make. Inside the repo the only writes
 are .env and artisan's own log.
 
 Options:
-  -y, --yes       accept everything (already the default)
-  -n, --dry-run   print what would change, write nothing
+  --dry-run       print what would change, write nothing
   -h, --help      show this help
 
 Exit status: 0 done, 1 a check failed, 2 unknown argument.
@@ -646,9 +645,8 @@ result() {
 main() {
   while [ $# -gt 0 ]; do
     case "$1" in
-      -y|--yes)     : ;;
-      -n|--dry-run) DRY_RUN=1 ;;
-      -h|--help)    usage; exit 0 ;;
+      --dry-run) DRY_RUN=1 ;;
+      -h|--help) usage; exit 0 ;;
       *)
         printf 'setup.sh: unknown argument: %s\n\n' "$1" >&2
         usage >&2
@@ -672,7 +670,7 @@ main() {
 
   if [ "$DRY_RUN" -eq 1 ]; then
     result
-    printf '\n  Nothing was written and nothing was installed. Re-run without -n to apply.\n'
+    printf '\n  Nothing was written and nothing was installed. Re-run without --dry-run to apply.\n'
     exit 0
   fi
 

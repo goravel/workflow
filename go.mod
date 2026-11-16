@@ -10,8 +10,7 @@ require (
 	github.com/go-playground/webhooks/v6 v6.4.0
 	github.com/go-resty/resty/v2 v2.17.2
 	github.com/google/go-github/v89 v89.0.0
-	github.com/google/go-github/v93 v93.0.0
-	github.com/goravel/framework v1.18.0
+	github.com/goravel/framework v1.18.1
 	github.com/goravel/gin v1.18.0
 	github.com/goravel/openai v1.18.0
 	github.com/goravel/sqlite v1.18.0
@@ -48,12 +47,12 @@ require (
 	github.com/cloudwego/base64x v0.1.6 // indirect
 	github.com/containerd/console v1.0.5 // indirect
 	github.com/dave/dst v0.27.4 // indirect
-	github.com/dromara/carbon/v2 v2.6.11 // indirect
+	github.com/dromara/carbon/v2 v2.6.17 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
-	github.com/gabriel-vasile/mimetype v1.4.13 // indirect
+	github.com/gabriel-vasile/mimetype v1.4.15 // indirect
 	github.com/gin-contrib/sse v1.1.0 // indirect
 	github.com/gin-contrib/timeout v1.2.1 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect

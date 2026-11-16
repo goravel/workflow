@@ -9,7 +9,7 @@ require (
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-playground/webhooks/v6 v6.4.0
 	github.com/go-resty/resty/v2 v2.17.2
-	github.com/google/go-github/v89 v89.0.0
+	github.com/google/go-github/v93 v93.0.0
 	github.com/google/go-github/v93 v93.0.0
 	github.com/goravel/framework v1.18.0
 	github.com/goravel/gin v1.18.0

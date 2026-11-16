@@ -4,6 +4,8 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -190,9 +192,27 @@ func (s *WebhookEventsTestSuite) TestEmptyBodyIsRejected() {
 	s.Equal(int64(0), s.countEvents(true))
 }
 
-// A body larger than the cap is rejected and nothing is stored. The cap mirrors
-// app/services/discord/github.go's maxWebhookBodyBytes (25 MB) and a non-JSON Content-Type keeps the
-// HTTP driver's request wrapper from pre-consuming the body.
+// A body between the 4096 KB driver default and the 25 MB cap is accepted, so
+// dropping body_limit back to the default fails here instead of in production.
+func (s *WebhookEventsTestSuite) TestBodyUnderLimitIsAccepted() {
+	body := strings.Repeat("a", 5<<20)
+
+	resp, err := s.Http(s.T()).
+		WithHeader("Content-Type", "text/plain").
+		WithHeader("X-GitHub-Event", "push").
+		WithHeader("X-GitHub-Delivery", "delivery-mid").
+		WithHeader("X-Hub-Signature-256", signGitHub(webhookSecret, body)).
+		Post("/webhooks/github", strings.NewReader(body))
+	s.Require().NoError(err)
+	resp.AssertOk()
+	s.Equal(int64(1), s.countEvents(true))
+}
+
+// A body larger than the cap is rejected with 413 and nothing is stored. The
+// HTTP driver enforces config/http.go's body_limit (25600 KB = 25 MB), which
+// mirrors app/services/discord/github.go's maxWebhookBodyBytes, so the overrun is
+// cut off before the controller runs. A non-JSON Content-Type keeps the HTTP
+// driver's request wrapper from pre-consuming the body.
 func (s *WebhookEventsTestSuite) TestOversizedBodyIsRejected() {
 	const oversizeBodyBytes = 25<<20 + 1
 	body := strings.Repeat("a", oversizeBodyBytes)
@@ -203,6 +223,27 @@ func (s *WebhookEventsTestSuite) TestOversizedBodyIsRejected() {
 		WithHeader("X-GitHub-Delivery", "delivery-big").
 		WithHeader("X-Hub-Signature-256", signGitHub(webhookSecret, body)).
 		Post("/webhooks/github", strings.NewReader(body))
+	s.Require().NoError(err)
+	resp.AssertStatus(http.StatusRequestEntityTooLarge)
+	s.Equal(int64(0), s.countEvents(true))
+}
+
+// A body without a Content-Length (chunked) is not caught by the HTTP driver's
+// body_limit check, so ProcessWebhook's own MaxBytesReader rejects it and the
+// controller answers 401. This keeps the app-level guard covered.
+func (s *WebhookEventsTestSuite) TestOversizedChunkedBodyIsRejected() {
+	const oversizeBodyBytes = 25<<20 + 1
+	body := strings.Repeat("a", oversizeBodyBytes)
+
+	// io.NopCloser hides the reader type from httptest.NewRequest, so the request
+	// carries no Content-Length and the driver only wraps the body in
+	// MaxBytesReader instead of aborting up front.
+	resp, err := s.Http(s.T()).
+		WithHeader("Content-Type", "text/plain").
+		WithHeader("X-GitHub-Event", "push").
+		WithHeader("X-GitHub-Delivery", "delivery-big-chunked").
+		WithHeader("X-Hub-Signature-256", signGitHub(webhookSecret, body)).
+		Post("/webhooks/github", io.NopCloser(strings.NewReader(body)))
 	s.Require().NoError(err)
 	resp.AssertUnauthorized()
 	s.Equal(int64(0), s.countEvents(true))

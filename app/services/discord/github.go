@@ -17,6 +17,9 @@ import (
 
 // maxWebhookBodyBytes caps the webhook request body read. GitHub allows
 // payloads up to 25 MB, so anything larger is rejected before verification.
+// The HTTP driver's body_limit (config/http.go) is set to the same value, so a
+// Content-Length overrun is answered with 413 before this runs; this guard still
+// covers chunked bodies that arrive without a Content-Length.
 const maxWebhookBodyBytes = 25 << 20
 
 // ErrMissingSecret is returned when no github webhook secret is configured, so

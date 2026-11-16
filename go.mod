@@ -11,7 +11,7 @@ require (
 	github.com/go-resty/resty/v2 v2.17.2
 	github.com/google/go-github/v89 v89.0.0
 	github.com/goravel/framework v1.18.1
-	github.com/goravel/gin v1.18.0
+	github.com/goravel/gin v1.18.1
 	github.com/goravel/openai v1.18.0
 	github.com/goravel/sqlite v1.18.0
 	github.com/stretchr/testify v1.12.1

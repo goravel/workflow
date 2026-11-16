@@ -192,6 +192,22 @@ func (s *WebhookEventsTestSuite) TestEmptyBodyIsRejected() {
 	s.Equal(int64(0), s.countEvents(true))
 }
 
+// A body between the 4096 KB driver default and the 25 MB cap is accepted, so
+// dropping body_limit back to the default fails here instead of in production.
+func (s *WebhookEventsTestSuite) TestBodyUnderLimitIsAccepted() {
+	body := strings.Repeat("a", 5<<20)
+
+	resp, err := s.Http(s.T()).
+		WithHeader("Content-Type", "text/plain").
+		WithHeader("X-GitHub-Event", "push").
+		WithHeader("X-GitHub-Delivery", "delivery-mid").
+		WithHeader("X-Hub-Signature-256", signGitHub(webhookSecret, body)).
+		Post("/webhooks/github", strings.NewReader(body))
+	s.Require().NoError(err)
+	resp.AssertOk()
+	s.Equal(int64(1), s.countEvents(true))
+}
+
 // A body larger than the cap is rejected with 413 and nothing is stored. The
 // HTTP driver enforces config/http.go's body_limit (25600 KB = 25 MB), which
 // mirrors app/services/discord/github.go's maxWebhookBodyBytes, so the overrun is

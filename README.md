@@ -107,9 +107,10 @@ key are set.
 cron loop and stays up, running `poll-events` every five seconds and
 `heartbeat` every minute. On macOS, `scripts/setup-macos.sh` installs a
 LaunchAgent that runs it at every login and restarts it if it exits. It stops
-with exit 1 before writing anything when `.env` still has `AGENT_ALLOWED_SENDERS`
-or `AGENT_PROJECT_NAME` blank, because `poll-events` refuses to start without
-them; `--skip-scheduler` is the opt-out for a checkout that only releases.
+with exit 1 before installing the plist when `.env` still has
+`AGENT_ALLOWED_SENDERS` or `AGENT_PROJECT_NAME` blank, because `poll-events`
+refuses to start without them; `--skip-scheduler` is the opt-out for a checkout
+that only releases.
 
 ```shell
 # Part of the normal setup: writes ~/Library/LaunchAgents/com.goravel.workflow.schedule.plist
@@ -130,3 +131,11 @@ time on the job's `PATH`, which launchd otherwise leaves at
 `storage/logs/launchd-schedule.log`, which git ignores with `storage`. Re-run
 `scripts/setup-macos.sh` after moving the checkout or after `go` or `paseo`
 moves.
+
+Stopping it — the uninstaller, or setup rewriting the plist — signals the
+`/bin/bash` wrapper launchd tracks. `go run` neither receives nor forwards
+`SIGTERM`, so a poll in flight is cut and `go run` can outlive the job;
+`ExitTimeOut` (120 s) only bounds how long launchd waits before `KILL`, and the
+uninstaller prints the `pkill` command for anything left polling. Pointing the
+job at a compiled binary is what would let the framework's shutdown drain the
+tick.

@@ -110,9 +110,12 @@ stop_agent() {
     return 0
   fi
 
-  # bootout sends SIGTERM. The framework traps SIGINT and SIGTERM and its
-  # Shutdown stops the cron loop and waits for the running tick, so no poll is
-  # cut in half (framework/console/application.go:47; schedule/console/run_command.go:38).
+  # bootout signals the process launchd tracks, which here is the /bin/bash
+  # wrapper: the `go run .` it started neither receives nor forwards the signal,
+  # so a poll in flight is cut and go run can outlive the job. ExitTimeOut (120 s
+  # in the plist) only bounds the wait before launchd sends KILL; a compiled
+  # binary as the job's program is what would let the framework's Shutdown drain
+  # the tick. verify() reports whatever the stop left behind.
   if out=$(launchctl bootout "$target" 2>&1); then
     did "launchd agent" "booted out $target"
   else
@@ -140,7 +143,7 @@ remove_plist() {
 verify() {
   section "Verification"
 
-  local target leftover
+  local target
   target="$(domain)/$LABEL"
 
   if agent_loaded; then
@@ -155,10 +158,12 @@ verify() {
     show "plist" "gone"
   fi
 
-  # go run is the job's direct child; if a launchd signal ever missed it, the
-  # scheduler would keep polling with nothing left to stop it.
-  if leftover=$(pgrep -f "artisan schedule:run" 2>/dev/null | head -1); then
-    note "leftover process" "pid $leftover still runs schedule:run, kill $leftover"
+  # bootout signals the bash wrapper, so the go run child it started can outlive
+  # the job and keep polling. pgrep cannot tell such a leftover from a scheduler
+  # started by hand, so name them with the command instead of killing anything.
+  local leftovers
+  if leftovers=$(pgrep -f "artisan schedule:run" 2>/dev/null | tr '\n' ' '); then
+    note "leftover process" "pids ${leftovers% } still run schedule:run, stop: pkill -f 'artisan schedule:run' (hand-run ones match too)"
   fi
 
   if [ -f "$LOG" ]; then

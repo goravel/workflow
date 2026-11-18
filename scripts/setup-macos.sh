@@ -15,7 +15,7 @@
 #   paseo     the cask, its daemon, and the project AGENT_PROJECT_NAME names
 #   config    ~/.config/opencode: the MCP entry plus agents/ and skills/
 #   repo      .env with an APP_KEY
-#   scheduler  a LaunchAgent that runs ./artisan schedule:run at every login
+#   scheduler a LaunchAgent that runs ./artisan schedule:run at every login
 #
 # Prerequisites this script checks but never installs: macOS, the Xcode Command
 # Line Tools and Homebrew (gh, uv, opencode and the paseo cask all come from
@@ -156,6 +156,12 @@ launchd_domain() { printf 'gui/%s' "$(id -u)"; }
 # launchd_loaded succeeds when the agent is in the GUI domain, running or not.
 launchd_loaded() { launchctl print "$(launchd_domain)/$LAUNCHD_LABEL" >/dev/null 2>&1; }
 
+# launchd_pid prints the pid launchd reports for a job target, empty when the job
+# is loaded but has not been started.
+launchd_pid() {
+  launchctl print "$1" 2>/dev/null | sed -n 's/^[[:space:]]*pid = //p' | head -1
+}
+
 # plist_escape makes a path safe inside a plist <string>.
 plist_escape() {
   printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
@@ -191,6 +197,10 @@ launchd_path() {
 # scheduler_plist prints the LaunchAgent for this checkout. RunAtLoad starts it at
 # login and KeepAlive brings it back when it exits: schedule:run is the cron loop
 # itself and never returns on its own, so there is no StartInterval to set.
+# ExitTimeOut 120 bounds how long launchd waits after SIGTERM before it sends KILL.
+# launchd signals the /bin/bash wrapper, and the go run it starts neither receives
+# nor forwards the signal, so a poll in flight is cut; a compiled binary as argv[0]
+# is what would let the framework's shutdown drain the tick.
 scheduler_plist() {
   cat <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -579,7 +589,8 @@ ensure_env() {
   fi
 
   # poll-events refuses to start without these (app/services/agent/service.go:67-82),
-  # so the scheduler step needs the answer here instead of its own lookup.
+  # so the scheduler step reads the answer here. Reported under --skip-scheduler
+  # too: a hand-run ./artisan poll-events needs the same two keys.
   local senders project
   senders=$(env_value AGENT_ALLOWED_SENDERS)
   project=$(env_value AGENT_PROJECT_NAME)
@@ -682,23 +693,24 @@ ensure_schedule_agent() {
   fi
 
   if ! command -v go >/dev/null 2>&1; then
-    cant "go" "not on PATH, and ./artisan runs 'go run .'"
-    if [ "$DRY_RUN" -eq 0 ]; then
-      exit 1
+    if [ "$DRY_RUN" -eq 1 ]; then
+      cant "go" "not on PATH, and ./artisan runs 'go run .'"
+    else
+      fail "go" "not on PATH, and ./artisan runs 'go run .'"
     fi
     return 0
   fi
   have "go" "$(go version | awk '{print $3}') at $(command -v go)"
 
-  # Q4: stop before anything is written instead of loading a job that would fail
+  # Q4: stop before the plist is written instead of loading a job that would fail
   # on every tick. The dry run still shows the plist and says a real run stops.
   if [ "$AGENT_CONFIG_OK" -eq 0 ]; then
     if [ "$DRY_RUN" -eq 1 ]; then
       todo "launchd agent" "would stop: .env still needs AGENT_ALLOWED_SENDERS and AGENT_PROJECT_NAME"
       return 0
     fi
-    cant "launchd agent" "not installed: the Consume GitHub events block in .env is incomplete"
-    exit 1
+    fail "launchd agent" "not installed: the Consume GitHub events block in .env is incomplete"
+    return 0
   fi
 
   if [ "$DRY_RUN" -eq 1 ]; then
@@ -720,14 +732,16 @@ ensure_schedule_agent() {
 
   # One compile before the agent is loaded: a broken tree fails here instead of at
   # every login, and go's build cache is warm, so `go run .` at login is quick.
-  local scratch out
+  local scratch out built
   scratch=$(mktemp -d) || { fail "go build" "mktemp -d failed"; return 0; }
-  if out=$(cd "$REPO_ROOT" && go build -o "$scratch/workflow" . 2>&1); then
-    did "go build" "compiled once, build cache warm"
-  else
-    fail "go build" "go build failed, the agent would fail on every start: $(printf '%s' "$out" | head -3 | tr '\n' ' ')"
-  fi
+  out=$(cd "$REPO_ROOT" && go build -o "$scratch/workflow" . 2>&1)
+  built=$?
   rm -rf "$scratch"
+  if [ "$built" -ne 0 ]; then
+    fail "go build" "go build failed, so the agent is not installed: $(printf '%s' "$out" | head -3 | tr '\n' ' ')"
+    return 0
+  fi
+  did "go build" "compiled once, build cache warm"
 
   local desired
   desired=$(scheduler_plist)
@@ -750,17 +764,22 @@ ensure_schedule_agent() {
     did "plist" "wrote $LAUNCHD_PLIST"
   fi
 
-  local target
+  local target pid
   target="$(launchd_domain)/$LAUNCHD_LABEL"
+  pid=$(launchd_pid "$target")
 
-  if launchd_loaded && [ "$PLIST_CHANGED" -eq 0 ]; then
-    have "launchd agent" "$target loaded"
+  # An unchanged plist and a live pid are the idempotent case. A loaded job with
+  # no pid was throttled or died, so it goes through the reload below.
+  if [ -n "$pid" ] && [ "$PLIST_CHANGED" -eq 0 ]; then
+    have "launchd agent" "$target running, pid $pid"
     return 0
   fi
 
   # A loaded job keeps the plist it was bootstrapped with, so a rewrite needs a
   # bootout first. enable clears a disable left behind by `launchctl disable`:
-  # bootstrap would otherwise succeed and never start the job.
+  # bootstrap would otherwise succeed and never start the job. bootout signals the
+  # /bin/bash wrapper only, so the go run it started can survive and keep polling
+  # beside the new job; `pgrep -f 'artisan schedule:run'` shows it.
   launchctl bootout "$target" >/dev/null 2>&1
   launchctl enable "$target" >/dev/null 2>&1
   if out=$(launchctl bootstrap "$(launchd_domain)" "$LAUNCHD_PLIST" 2>&1); then
@@ -773,9 +792,9 @@ ensure_schedule_agent() {
   # RunAtLoad starts it at once. Wait for the pid launchd reports rather than
   # trusting the bootstrap exit status; show() records the fact without counting
   # it as a second change.
-  local waited=0 pid
+  local waited=0
   while [ "$waited" -lt "$AGENT_WAIT" ]; do
-    pid=$(launchctl print "$target" 2>/dev/null | sed -n 's/^[[:space:]]*pid = //p' | head -1)
+    pid=$(launchd_pid "$target")
     if [ -n "$pid" ]; then
       show "launchd agent" "$target running, pid $pid"
       return 0
@@ -856,16 +875,19 @@ verify() {
 
   if [ "$SKIP_SCHEDULER" -eq 1 ]; then
     note "launchd agent" "--skip-scheduler, not checked"
-  elif launchd_loaded; then
-    local pid
-    pid=$(launchctl print "$(launchd_domain)/$LAUNCHD_LABEL" 2>/dev/null \
-      | sed -n 's/^[[:space:]]*pid = //p' | head -1)
-    show "launchd agent" "$LAUNCHD_LABEL running, pid ${pid:-unknown}"
-    if [ -f "$LAUNCHD_LOG" ]; then
-      show "launchd log" "$LAUNCHD_LOG"
-    fi
   else
-    fail "launchd agent" "$LAUNCHD_LABEL is not loaded"
+    local pid
+    pid=$(launchd_pid "$(launchd_domain)/$LAUNCHD_LABEL")
+    if [ -n "$pid" ]; then
+      show "launchd agent" "$LAUNCHD_LABEL running, pid $pid"
+      if [ -f "$LAUNCHD_LOG" ]; then
+        show "launchd log" "$LAUNCHD_LOG"
+      fi
+    elif launchd_loaded; then
+      fail "launchd agent" "$LAUNCHD_LABEL is loaded but has no pid, read $LAUNCHD_LOG"
+    else
+      fail "launchd agent" "$LAUNCHD_LABEL is not loaded"
+    fi
   fi
 }
 

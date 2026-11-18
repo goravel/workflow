@@ -198,9 +198,9 @@ launchd_path() {
 # login and KeepAlive brings it back when it exits: schedule:run is the cron loop
 # itself and never returns on its own, so there is no StartInterval to set.
 # ExitTimeOut 120 bounds how long launchd waits after SIGTERM before it sends KILL.
-# launchd signals the /bin/bash wrapper, and the go run it starts neither receives
-# nor forwards the signal, so a poll in flight is cut; a compiled binary as argv[0]
-# is what would let the framework's shutdown drain the tick.
+# launchd takes the job's whole process group when the job dies, so nothing outlives
+# it, but a poll in flight is cut mid-tick. A compiled binary as argv[0] is what
+# would let the framework's shutdown drain the tick instead.
 scheduler_plist() {
   cat <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -738,7 +738,11 @@ ensure_schedule_agent() {
   built=$?
   rm -rf "$scratch"
   if [ "$built" -ne 0 ]; then
-    fail "go build" "go build failed, so the agent is not installed: $(printf '%s' "$out" | head -3 | tr '\n' ' ')"
+    local msg="go build failed, the agent is left as it was: $(printf '%s' "$out" | head -3 | tr '\n' ' ')"
+    if launchd_loaded; then
+      msg="$msg (still loaded: $(launchd_domain)/$LAUNCHD_LABEL, read $LAUNCHD_LOG)"
+    fi
+    fail "go build" "$msg"
     return 0
   fi
   did "go build" "compiled once, build cache warm"
@@ -777,9 +781,8 @@ ensure_schedule_agent() {
 
   # A loaded job keeps the plist it was bootstrapped with, so a rewrite needs a
   # bootout first. enable clears a disable left behind by `launchctl disable`:
-  # bootstrap would otherwise succeed and never start the job. bootout signals the
-  # /bin/bash wrapper only, so the go run it started can survive and keep polling
-  # beside the new job; `pgrep -f 'artisan schedule:run'` shows it.
+  # bootstrap would otherwise succeed and never start the job. bootout takes the
+  # job's process group, so a tick in flight is cut rather than drained.
   launchctl bootout "$target" >/dev/null 2>&1
   launchctl enable "$target" >/dev/null 2>&1
   if out=$(launchctl bootstrap "$(launchd_domain)" "$LAUNCHD_PLIST" 2>&1); then

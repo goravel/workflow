@@ -110,12 +110,10 @@ stop_agent() {
     return 0
   fi
 
-  # bootout signals the process launchd tracks, which here is the /bin/bash
-  # wrapper: the `go run .` it started neither receives nor forwards the signal,
-  # so a poll in flight is cut and go run can outlive the job. ExitTimeOut (120 s
-  # in the plist) only bounds the wait before launchd sends KILL; a compiled
-  # binary as the job's program is what would let the framework's Shutdown drain
-  # the tick. verify() reports whatever the stop left behind.
+  # bootout takes the job's process group with it (the plist sets no
+  # AbandonProcessGroup), so nothing is orphaned, but a poll in flight is cut
+  # mid-tick instead of draining. ExitTimeOut (120 s in the plist) only bounds the
+  # wait before launchd sends KILL.
   if out=$(launchctl bootout "$target" 2>&1); then
     did "launchd agent" "booted out $target"
   else
@@ -158,12 +156,12 @@ verify() {
     show "plist" "gone"
   fi
 
-  # bootout signals the bash wrapper, so the go run child it started can outlive
-  # the job and keep polling. pgrep cannot tell such a leftover from a scheduler
-  # started by hand, so name them with the command instead of killing anything.
-  local leftovers
-  if leftovers=$(pgrep -f "artisan schedule:run" 2>/dev/null | tr '\n' ' '); then
-    note "leftover process" "pids ${leftovers% } still run schedule:run, stop: pkill -f 'artisan schedule:run' (hand-run ones match too)"
+  # launchd takes the job's whole process group, so the agent leaves no scheduler
+  # behind. A match here belongs to someone else — normally a ./artisan
+  # schedule:run started in a terminal — and this script does not touch it.
+  local manual
+  if manual=$(pgrep -f "artisan schedule:run" 2>/dev/null | tr '\n' ' '); then
+    note "other scheduler" "pids ${manual% } run schedule:run outside this job, left alone"
   fi
 
   if [ -f "$LOG" ]; then

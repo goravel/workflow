@@ -132,10 +132,7 @@ time on the job's `PATH`, which launchd otherwise leaves at
 `scripts/setup-macos.sh` after moving the checkout or after `go` or `paseo`
 moves.
 
-Stopping it — the uninstaller, or setup rewriting the plist — signals the
-`/bin/bash` wrapper launchd tracks. `go run` neither receives nor forwards
-`SIGTERM`, so a poll in flight is cut and `go run` can outlive the job;
-`ExitTimeOut` (120 s) only bounds how long launchd waits before `KILL`, and the
-uninstaller prints the `pkill` command for anything left polling. Pointing the
-job at a compiled binary is what would let the framework's shutdown drain the
-tick.
+Stopping it — the uninstaller, or setup rewriting the plist — ends the job's
+whole process group, so nothing is left running, but a poll that was in flight is
+lost rather than finished. `ExitTimeOut` (120 s) is only how long launchd waits
+after `SIGTERM` before it sends `KILL`.

@@ -4,8 +4,10 @@
 #
 # Installs the external services the app and its agent tooling reach for, then
 # writes the shared config files only when a key, a folder or a project is
-# missing. It creates no database/ and runs no migrate; artisan writes only
-# its log under storage/logs.
+# missing, and finally loads the LaunchAgent that runs ./artisan schedule:run at
+# login. It creates no database/ and runs no migrate; inside the repo it writes
+# .env and the logs under storage/ (artisan's own, and the agent's), and outside
+# it ~/.config/opencode, ~/.local/bin and ~/Library/LaunchAgents.
 #
 #   gh        GitHub CLI, for the release commands and the mention poller
 #   uv/uvx    the code-review-graph MCP server runs as ["uvx", "code-review-graph", "serve"]
@@ -13,11 +15,13 @@
 #   paseo     the cask, its daemon, and the project AGENT_PROJECT_NAME names
 #   config    ~/.config/opencode: the MCP entry plus agents/ and skills/
 #   repo      .env with an APP_KEY
+#   scheduler  a LaunchAgent that runs ./artisan schedule:run at every login
 #
 # Prerequisites this script checks but never installs: macOS, the Xcode Command
 # Line Tools and Homebrew (gh, uv, opencode and the paseo cask all come from
-# it). Go 1.26+ from go.mod is required too, but only ./artisan key:generate
-# and go run . need it, so it shows up there rather than up front.
+# it). Go 1.26+ from go.mod is required too, but only ./artisan key:generate and
+# go run . need it — so it shows up in the .env step and in the scheduler step
+# rather than up front.
 #
 # macOS only, non-interactive, macOS /bin/bash 3.2: no associative arrays, no
 # mapfile, no ${var,,}, no sort -V, no jq.
@@ -39,6 +43,12 @@ readonly LOCAL_BIN="$HOME/.local/bin"
 readonly AGENTS_REPO="goravel/agents"
 readonly SKILLS_REPO="cxuu/golang-skills"
 readonly DAEMON_WAIT=60
+readonly LAUNCHD_LABEL="com.goravel.workflow.schedule"
+readonly LAUNCHD_AGENTS="$HOME/Library/LaunchAgents"
+readonly LAUNCHD_PLIST="$LAUNCHD_AGENTS/$LAUNCHD_LABEL.plist"
+readonly LAUNCHD_LOG_DIR="$REPO_ROOT/storage/logs"
+readonly LAUNCHD_LOG="$LAUNCHD_LOG_DIR/launchd-schedule.log"
+readonly AGENT_WAIT=15
 
 DRY_RUN=0
 FAILED=0
@@ -46,6 +56,10 @@ CHANGES=0
 HAVES=0
 CANTS=0
 CHANGES_TEXT=""
+SKIP_SCHEDULER=0
+AGENT_CONFIG_OK=0
+PLIST_CHANGED=0
+RUN_PATH=""
 
 usage() {
   cat <<'EOF'
@@ -53,21 +67,28 @@ Prepare this checkout on macOS.
 
 Installs gh, uv/uvx, opencode and paseo, then writes the ~/.config/opencode
 entries (code-review-graph MCP server, agents, skills), .env with an APP_KEY,
-and the paseo project AGENT_PROJECT_NAME names.
+and the paseo project AGENT_PROJECT_NAME names. On macOS it then loads a
+LaunchAgent that runs ./artisan schedule:run at every login.
 
 Requires: macOS, the Xcode Command Line Tools, Homebrew and Go 1.26+ (from
 go.mod). None of them is installed here: gh, uv, opencode and the paseo cask
-come from Homebrew, and ./artisan key:generate needs Go on PATH.
+come from Homebrew, and ./artisan key:generate, go run . and the scheduler's
+`go run .` need Go on PATH. The scheduler also needs AGENT_ALLOWED_SENDERS and
+AGENT_PROJECT_NAME filled in .env, because poll-events refuses to start without
+them; --skip-scheduler is the opt-out.
 
 Every step resolves itself — it reports the evidence that its target is already
-there, or names the one change it would make. Inside the repo the only writes
-are .env and artisan's own log.
+there, or names the one change it would make. Inside the repo the only writes are
+.env and the logs under storage/; outside it, ~/.config/opencode, ~/.local/bin
+and ~/Library/LaunchAgents.
 
 Options:
-  --dry-run       print what would change, write nothing
-  -h, --help      show this help
+  --dry-run            print what would change, write nothing
+  --skip-scheduler     leave ./artisan schedule:run out of the login items
+  -h, --help           show this help
 
-Exit status: 0 done, 1 a check failed, 2 unknown argument.
+Exit status: 0 done, 1 a check failed (including "the scheduler was not
+installed because .env is incomplete"), 2 unknown argument.
 EOF
 }
 
@@ -127,6 +148,87 @@ sh_run() {
 env_value() {
   [ -f .env ] || return 0
   sed -n "s/^$1=//p" .env | head -1 | sed -e 's/^"//' -e 's/"$//'
+}
+
+# launchd_domain prints the launchctl domain a ~/Library/LaunchAgents job lives in.
+launchd_domain() { printf 'gui/%s' "$(id -u)"; }
+
+# launchd_loaded succeeds when the agent is in the GUI domain, running or not.
+launchd_loaded() { launchctl print "$(launchd_domain)/$LAUNCHD_LABEL" >/dev/null 2>&1; }
+
+# plist_escape makes a path safe inside a plist <string>.
+plist_escape() {
+  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
+}
+
+# add_path appends a directory to RUN_PATH unless it is already there.
+add_path() {
+  case ":$RUN_PATH:" in
+    *":$1:"*) ;;
+    *) RUN_PATH="${RUN_PATH:+$RUN_PATH:}$1" ;;
+  esac
+}
+
+# launchd_path prints the PATH the agent runs with: the directories go and paseo
+# live in on this machine, then ~/.local/bin (where this script links paseo), the
+# Homebrew defaults, and the system directories launchd's own PATH stops at.
+launchd_path() {
+  RUN_PATH=""
+  local tool bin dir
+
+  for tool in go paseo; do
+    bin=$(command -v "$tool" 2>/dev/null) || continue
+    add_path "$(dirname "$bin")"
+  done
+  for dir in "$LOCAL_BIN" /opt/homebrew/bin /usr/local/bin \
+             /usr/bin /bin /usr/sbin /sbin; do
+    add_path "$dir"
+  done
+
+  printf '%s' "$RUN_PATH"
+}
+
+# scheduler_plist prints the LaunchAgent for this checkout. RunAtLoad starts it at
+# login and KeepAlive brings it back when it exits: schedule:run is the cron loop
+# itself and never returns on its own, so there is no StartInterval to set.
+scheduler_plist() {
+  cat <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>$LAUNCHD_LABEL</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>$(plist_escape "$REPO_ROOT/artisan")</string>
+		<string>schedule:run</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>$(plist_escape "$REPO_ROOT")</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>$(plist_escape "$(launchd_path)")</string>
+		<key>HOME</key>
+		<string>$(plist_escape "$HOME")</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>ExitTimeOut</key>
+	<integer>120</integer>
+	<key>StandardOutPath</key>
+	<string>$(plist_escape "$LAUNCHD_LOG")</string>
+	<key>StandardErrorPath</key>
+	<string>$(plist_escape "$LAUNCHD_LOG")</string>
+</dict>
+</plist>
+EOF
 }
 
 paseo_daemon_running() {
@@ -476,6 +578,23 @@ ensure_env() {
     did ".env" "created from .env.example"
   fi
 
+  # poll-events refuses to start without these (app/services/agent/service.go:67-82),
+  # so the scheduler step needs the answer here instead of its own lookup.
+  local senders project
+  senders=$(env_value AGENT_ALLOWED_SENDERS)
+  project=$(env_value AGENT_PROJECT_NAME)
+  if [ -n "$senders" ] && [ -n "$project" ]; then
+    AGENT_CONFIG_OK=1
+    have "agent config" "AGENT_PROJECT_NAME=$project"
+  else
+    AGENT_CONFIG_OK=0
+    if [ -f .env ]; then
+      cant "agent config" "AGENT_ALLOWED_SENDERS and AGENT_PROJECT_NAME are blank in .env"
+    else
+      cant "agent config" "no .env to read, and the agent needs both keys from it"
+    fi
+  fi
+
   local key
   key=$(env_value APP_KEY)
   if [ -n "$key" ]; then
@@ -549,6 +668,124 @@ ensure_paseo_project() {
   fi
 }
 
+# The agent is the scheduler: schedule:run starts the cron loop and stays up, so
+# the plist carries RunAtLoad and KeepAlive and no StartInterval. launchd hands a
+# job PATH=/usr/bin:/bin:/usr/sbin:/sbin, so the plist bakes in the go and paseo
+# directories this run found; WorkingDirectory is the checkout, so .env, storage/
+# and the sqlite path resolve exactly as they do by hand.
+ensure_schedule_agent() {
+  section "launchd scheduler agent"
+
+  if [ "$SKIP_SCHEDULER" -eq 1 ]; then
+    note "launchd agent" "--skip-scheduler, nothing installed"
+    return 0
+  fi
+
+  if ! command -v go >/dev/null 2>&1; then
+    cant "go" "not on PATH, and ./artisan runs 'go run .'"
+    if [ "$DRY_RUN" -eq 0 ]; then
+      exit 1
+    fi
+    return 0
+  fi
+  have "go" "$(go version | awk '{print $3}') at $(command -v go)"
+
+  # Q4: stop before anything is written instead of loading a job that would fail
+  # on every tick. The dry run still shows the plist and says a real run stops.
+  if [ "$AGENT_CONFIG_OK" -eq 0 ]; then
+    if [ "$DRY_RUN" -eq 1 ]; then
+      todo "launchd agent" "would stop: .env still needs AGENT_ALLOWED_SENDERS and AGENT_PROJECT_NAME"
+      return 0
+    fi
+    cant "launchd agent" "not installed: the Consume GitHub events block in .env is incomplete"
+    exit 1
+  fi
+
+  if [ "$DRY_RUN" -eq 1 ]; then
+    todo "launchd agent" "would write $LAUNCHD_PLIST"
+    printf '\n%s\n' "$(scheduler_plist)"
+    todo "launchd agent" "would run launchctl enable, then bootstrap $(launchd_domain) $LAUNCHD_PLIST"
+    return 0
+  fi
+
+  # launchd opens StandardOutPath itself and cannot create the directory, and a
+  # fresh checkout has no storage/ because .gitignore ignores it.
+  if [ -d "$LAUNCHD_LOG_DIR" ]; then
+    have "storage/logs" "$LAUNCHD_LOG_DIR"
+  else
+    mkdir -p "$LAUNCHD_LOG_DIR" \
+      || { fail "storage/logs" "mkdir -p $LAUNCHD_LOG_DIR failed"; return 0; }
+    did "storage/logs" "created $LAUNCHD_LOG_DIR"
+  fi
+
+  # One compile before the agent is loaded: a broken tree fails here instead of at
+  # every login, and go's build cache is warm, so `go run .` at login is quick.
+  local scratch out
+  scratch=$(mktemp -d) || { fail "go build" "mktemp -d failed"; return 0; }
+  if out=$(cd "$REPO_ROOT" && go build -o "$scratch/workflow" . 2>&1); then
+    did "go build" "compiled once, build cache warm"
+  else
+    fail "go build" "go build failed, the agent would fail on every start: $(printf '%s' "$out" | head -3 | tr '\n' ' ')"
+  fi
+  rm -rf "$scratch"
+
+  local desired
+  desired=$(scheduler_plist)
+
+  if [ -d "$LAUNCHD_AGENTS" ]; then
+    have "LaunchAgents" "$LAUNCHD_AGENTS"
+  else
+    mkdir -p "$LAUNCHD_AGENTS" \
+      || { fail "LaunchAgents" "mkdir -p $LAUNCHD_AGENTS failed"; return 0; }
+    did "LaunchAgents" "created $LAUNCHD_AGENTS"
+  fi
+
+  if [ -f "$LAUNCHD_PLIST" ] && [ "$(cat "$LAUNCHD_PLIST")" = "$desired" ]; then
+    have "plist" "$LAUNCHD_PLIST matches this checkout"
+  else
+    printf '%s\n' "$desired" > "$LAUNCHD_PLIST" \
+      || { fail "plist" "writing $LAUNCHD_PLIST failed"; return 0; }
+    chmod 644 "$LAUNCHD_PLIST"
+    PLIST_CHANGED=1
+    did "plist" "wrote $LAUNCHD_PLIST"
+  fi
+
+  local target
+  target="$(launchd_domain)/$LAUNCHD_LABEL"
+
+  if launchd_loaded && [ "$PLIST_CHANGED" -eq 0 ]; then
+    have "launchd agent" "$target loaded"
+    return 0
+  fi
+
+  # A loaded job keeps the plist it was bootstrapped with, so a rewrite needs a
+  # bootout first. enable clears a disable left behind by `launchctl disable`:
+  # bootstrap would otherwise succeed and never start the job.
+  launchctl bootout "$target" >/dev/null 2>&1
+  launchctl enable "$target" >/dev/null 2>&1
+  if out=$(launchctl bootstrap "$(launchd_domain)" "$LAUNCHD_PLIST" 2>&1); then
+    did "launchd agent" "bootstrapped $target"
+  else
+    fail "launchd agent" "launchctl bootstrap failed: $(printf '%s' "$out" | head -1)"
+    return 0
+  fi
+
+  # RunAtLoad starts it at once. Wait for the pid launchd reports rather than
+  # trusting the bootstrap exit status; show() records the fact without counting
+  # it as a second change.
+  local waited=0 pid
+  while [ "$waited" -lt "$AGENT_WAIT" ]; do
+    pid=$(launchctl print "$target" 2>/dev/null | sed -n 's/^[[:space:]]*pid = //p' | head -1)
+    if [ -n "$pid" ]; then
+      show "launchd agent" "$target running, pid $pid"
+      return 0
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  fail "launchd agent" "no pid after ${AGENT_WAIT}s, read $LAUNCHD_LOG"
+}
+
 # verify repeats the same facts as a read-only pass. show keeps the totals those
 # of the run itself, so the steps are not counted twice.
 verify() {
@@ -616,6 +853,20 @@ verify() {
   else
     fail ".env" "missing, or APP_KEY is empty"
   fi
+
+  if [ "$SKIP_SCHEDULER" -eq 1 ]; then
+    note "launchd agent" "--skip-scheduler, not checked"
+  elif launchd_loaded; then
+    local pid
+    pid=$(launchctl print "$(launchd_domain)/$LAUNCHD_LABEL" 2>/dev/null \
+      | sed -n 's/^[[:space:]]*pid = //p' | head -1)
+    show "launchd agent" "$LAUNCHD_LABEL running, pid ${pid:-unknown}"
+    if [ -f "$LAUNCHD_LOG" ]; then
+      show "launchd log" "$LAUNCHD_LOG"
+    fi
+  else
+    fail "launchd agent" "$LAUNCHD_LABEL is not loaded"
+  fi
 }
 
 result() {
@@ -646,6 +897,7 @@ main() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --dry-run) DRY_RUN=1 ;;
+      --skip-scheduler) SKIP_SCHEDULER=1 ;;
       -h|--help) usage; exit 0 ;;
       *)
         printf 'setup.sh: unknown argument: %s\n\n' "$1" >&2
@@ -667,6 +919,7 @@ main() {
   ensure_agents_and_skills
   ensure_env
   ensure_paseo_project
+  ensure_schedule_agent
 
   if [ "$DRY_RUN" -eq 1 ]; then
     result
@@ -685,6 +938,10 @@ main() {
   printf '\nNext:\n'
   printf '  go run .                # serves on APP_PORT (4500)\n'
   printf '  ./artisan poll-events   # one mention poll cycle\n'
+  if [ "$SKIP_SCHEDULER" -eq 0 ]; then
+    printf '  tail -f storage/logs/launchd-schedule.log   # the login scheduler\n'
+    printf '  scripts/uninstall-schedule-launchd.sh       # stop it again\n'
+  fi
   printf '\nDone.\n'
 }
 

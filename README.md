@@ -6,6 +6,8 @@ The package releases major and patch versions for framework and packages, and ru
 
 Copy `.env.example` to `.env` and fill in only the parts you need — the file is grouped into **Save GitHub events**, **Consume GitHub events**, **Notification in Discord**, and shared-key comments. The unlabelled keys at the top are common to every feature: app name, key, debug flag, logging, the sqlite database, and session settings.
 
+On macOS, `scripts/setup-macos.sh` does the checkout side of this: it installs the tooling it can, copies `.env` once and never overwrites it, generates `APP_KEY`, and loads the login scheduler described under **Mention agent**.
+
 Release Goravel version has no section of its own: the release commands read `GITHUB_TOKEN` from the shared-key block, whose comment names Release Goravel version.
 
 The **Notification in Discord** section is optional: leave every `DISCORD_*` and `MAIL_*` key blank and webhook events are still stored — only pull-request threads, core-role mentions, heartbeat alerts, and webhook failure mail are skipped. `MAIL_*` is the failure-alert channel, so it lives here even though the section is named Discord.
@@ -98,3 +100,39 @@ repository.
 
 The live-router feature tests skip themselves unless `AI_PROVIDER` and its API
 key are set.
+
+### Scheduler at login (macOS)
+
+`./artisan schedule:run` is the scheduler itself, not one tick: it starts the
+cron loop and stays up, running `poll-events` every five seconds and
+`heartbeat` every minute. On macOS, `scripts/setup-macos.sh` installs a
+LaunchAgent that runs it at every login and restarts it if it exits. It stops
+with exit 1 before installing the plist when `.env` still has
+`AGENT_ALLOWED_SENDERS` or `AGENT_PROJECT_NAME` blank, because `poll-events`
+refuses to start without them; `--skip-scheduler` is the opt-out for a checkout
+that only releases.
+
+```shell
+# Part of the normal setup: writes ~/Library/LaunchAgents/com.goravel.workflow.schedule.plist
+scripts/setup-macos.sh
+
+# Everything except the login scheduler
+scripts/setup-macos.sh --skip-scheduler
+
+# Boot the agent out and delete its plist
+scripts/uninstall-schedule-launchd.sh
+```
+
+The agent runs `/bin/bash <checkout>/artisan schedule:run` with its working
+directory set to the checkout, so `.env`, `storage/` and the sqlite path resolve
+as they do by hand. It puts the `go` and `paseo` directories it found at install
+time on the job's `PATH`, which launchd otherwise leaves at
+`/usr/bin:/bin:/usr/sbin:/sbin`. Output goes to
+`storage/logs/launchd-schedule.log`, which git ignores with `storage`. Re-run
+`scripts/setup-macos.sh` after moving the checkout or after `go` or `paseo`
+moves.
+
+Stopping it — the uninstaller, or setup rewriting the plist — ends the job's
+whole process group, so nothing is left running, but a poll that was in flight is
+lost rather than finished. `ExitTimeOut` (120 s) is only how long launchd waits
+after `SIGTERM` before it sends `KILL`.

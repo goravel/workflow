@@ -121,6 +121,10 @@ scripts/setup-macos.sh --skip-scheduler
 
 # Boot the agent out and delete its plist
 scripts/uninstall-schedule-launchd.sh
+
+# Restart the Scheduler
+launchctl stop com.goravel.workflow.schedule
+launchctl start com.goravel.workflow.schedule
 ```
 
 The agent runs `/bin/bash <checkout>/artisan schedule:run` with its working

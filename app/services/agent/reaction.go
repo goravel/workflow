@@ -103,12 +103,14 @@ func repositoryParts(repository string) (owner, repo string, ok bool) {
 	return owner, repo, true
 }
 
-// statusMessage describes a non-2xx reply by its status and body. The body is
-// read rather than decoded: a 5xx page is often HTML or empty, so decoding it
-// would report a JSON error, or a stray EOF that reads like a transport failure.
+// statusMessage describes a non-2xx reply by its status and a single-line body
+// snippet. The body is read rather than decoded: a 5xx page is often HTML or
+// empty, so decoding it would report a JSON error, or a stray EOF that reads
+// like a transport failure.
 func statusMessage(response *http.Response) string {
 	snippet, _ := io.ReadAll(io.LimitReader(response.Body, graphQLErrorBodyLimit))
-	if text := strings.TrimSpace(string(snippet)); text != "" {
+	text := strings.Join(strings.Fields(strings.ToValidUTF8(string(snippet), "")), " ")
+	if text != "" {
 		return fmt.Sprintf("status %d: %s", response.StatusCode, text)
 	}
 

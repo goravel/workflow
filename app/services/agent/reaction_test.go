@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -283,12 +284,26 @@ func TestGitHubReactorReviewStatusBeforeDecode(t *testing.T) {
 		status  int
 		body    string
 		wantErr string
+		capped  bool
 	}{
 		{
 			name:    "html server error page",
 			status:  http.StatusBadGateway,
 			body:    `<html><body>502 Bad Gateway</body></html>`,
 			wantErr: "status 502",
+		},
+		{
+			name:    "multi-line body stays on one line",
+			status:  http.StatusBadGateway,
+			body:    "<html>\n<body>\n502 Bad Gateway\n</body>\n</html>",
+			wantErr: "status 502: <html> <body> 502 Bad Gateway </body> </html>",
+		},
+		{
+			name:    "long body is capped",
+			status:  http.StatusBadGateway,
+			body:    strings.Repeat("<p>bad</p>", 100),
+			wantErr: "status 502",
+			capped:  true,
 		},
 		{
 			name:    "empty server error body",
@@ -314,6 +329,11 @@ func TestGitHubReactorReviewStatusBeforeDecode(t *testing.T) {
 			err = reactor.ReactToReview(context.Background(), "goravel/workflow", "PRR_kwDOPLmCss8AAAABaa99qw")
 			require.ErrorContains(t, err, test.wantErr)
 			require.NotContains(t, err.Error(), "decode response")
+			require.NotContains(t, err.Error(), "\n")
+			if test.capped {
+				// The snippet stops at graphQLErrorBodyLimit, so the full body is never echoed.
+				require.Less(t, len(err.Error()), len(test.body))
+			}
 			// One attempt: a failed reaction is logged, never resent.
 			require.Len(t, recorder.list(), 1)
 		})

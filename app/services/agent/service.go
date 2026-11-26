@@ -263,7 +263,7 @@ func (s *Service) handle(ctx context.Context, ev *event, instruction string) err
 		Dir:     project.Path,
 		Project: project.ID,
 		Agent:   agent,
-		Prompt:  ev.agentPrompt(instruction),
+		Prompt:  ev.contextBlock(instruction),
 		Title:   title,
 	})
 }

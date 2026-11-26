@@ -294,16 +294,9 @@ func (e *event) prompt(instruction, repository string) string {
 	return repositoryLabel + ": " + repository + "\n" + e.contextBlock(instruction)
 }
 
-// agentPrompt builds the context block handed to the agent. It carries the same
-// links and instruction as prompt but omits the Repository line: the agent runs
-// inside the checkout, so the repository is implied by its working directory.
-// The instruction arrives exactly as the user wrote it: what to do with it, and
-// whether to post, is the agent's decision.
-func (e *event) agentPrompt(instruction string) string {
-	return e.contextBlock(instruction)
-}
-
-// contextBlock emits the PR/Issue/comment links followed by the instruction.
+// contextBlock emits the PR/Issue/comment links followed by the instruction,
+// which arrives exactly as the user wrote it: what to do with it, and whether to
+// post, is the agent's decision.
 func (e *event) contextBlock(instruction string) string {
 	payload, _ := e.payload()
 

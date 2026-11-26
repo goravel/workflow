@@ -442,7 +442,7 @@ func TestEventAgentPrompt(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			event := &event{Event: test.event, Repository: "goravel/goravel", Payload: test.payload}
 
-			got := event.agentPrompt(test.instruction)
+			got := event.contextBlock(test.instruction)
 			require.Equal(t, test.want, got)
 			require.NotContains(t, got, "Repository:")
 			require.NotContains(t, got, "comment the review result to the pr")

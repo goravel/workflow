@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -263,13 +264,78 @@ func TestGitHubReactorReviewErrors(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, server := newReactionServer(t, test.status, test.body)
+			recorder, server := newReactionServer(t, test.status, test.body)
 
 			reactor, err := newGitHubReactor("test-token", server.Client(), server.URL, server.URL+"/graphql")
 			require.NoError(t, err)
 
 			err = reactor.ReactToReview(context.Background(), "goravel/example", "MDE3OlB1bGxSZXF1ZXN0UmV2aWV3ODA=")
 			require.ErrorContains(t, err, test.wantErr)
+			require.Len(t, recorder.list(), 1)
+		})
+	}
+}
+
+// TestGitHubReactorReviewStatusBeforeDecode pins that a non-2xx reply reports
+// its status, not a decode error, and is sent exactly once.
+func TestGitHubReactorReviewStatusBeforeDecode(t *testing.T) {
+	tests := []struct {
+		name    string
+		status  int
+		body    string
+		wantErr string
+		capped  bool
+	}{
+		{
+			name:    "html server error page",
+			status:  http.StatusBadGateway,
+			body:    `<html><body>502 Bad Gateway</body></html>`,
+			wantErr: "status 502",
+		},
+		{
+			name:    "multi-line body stays on one line",
+			status:  http.StatusBadGateway,
+			body:    "<html>\n<body>\n502 Bad Gateway\n</body>\n</html>",
+			wantErr: "status 502: <html> <body> 502 Bad Gateway </body> </html>",
+		},
+		{
+			name:    "long body is capped",
+			status:  http.StatusBadGateway,
+			body:    strings.Repeat("<p>bad</p>", 100),
+			wantErr: "status 502",
+			capped:  true,
+		},
+		{
+			name:    "empty server error body",
+			status:  http.StatusInternalServerError,
+			body:    "",
+			wantErr: "status 500",
+		},
+		{
+			name:    "json error message is kept",
+			status:  http.StatusForbidden,
+			body:    `{"message":"Resource not accessible by integration"}`,
+			wantErr: "Resource not accessible by integration",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			recorder, server := newReactionServer(t, test.status, test.body)
+
+			reactor, err := newGitHubReactor("test-token", server.Client(), server.URL, server.URL+"/graphql")
+			require.NoError(t, err)
+
+			err = reactor.ReactToReview(context.Background(), "goravel/workflow", "PRR_kwDOPLmCss8AAAABaa99qw")
+			require.ErrorContains(t, err, test.wantErr)
+			require.NotContains(t, err.Error(), "decode response")
+			require.NotContains(t, err.Error(), "\n")
+			if test.capped {
+				// The snippet stops at graphQLErrorBodyLimit, so the full body is never echoed.
+				require.Less(t, len(err.Error()), len(test.body))
+			}
+			// One attempt: a failed reaction is logged, never resent.
+			require.Len(t, recorder.list(), 1)
 		})
 	}
 }

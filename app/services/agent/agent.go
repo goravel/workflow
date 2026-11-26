@@ -63,7 +63,7 @@ type Dispatcher interface {
 var agentIntroductions = map[string]string{
 	constants.AgentShip:    "plans the task first, then implements and drives it through review to a pull request",
 	constants.AgentReview:  "reviews an existing GitHub pull request and reports findings",
-	constants.AgentAnalyze: "analyzes an existing GitHub pull request for breaking changes and usage, without editing code",
+	constants.AgentAnalyze: "answers a question about an existing GitHub issue or pull request, covering breaking changes, usage, and the Laravel comparison, without editing code",
 }
 
 // aiRouter routes instructions to an agent using the configured AI provider.
@@ -253,6 +253,8 @@ func (routerAgent) Instructions() string {
 		b.WriteString(")")
 	}
 	b.WriteString(". ")
+	b.WriteString("Choose analyze when the " + instructionLabel + " asks a question about a pull request or an issue: what a change breaks, how it is used, or how it compares with Laravel. ")
+	b.WriteString("Choose review to review an existing pull request, and ship when the " + instructionLabel + " asks for code to change. ")
 	b.WriteString("Line 2 holds the repository to work on as a bare owner/name, or " + noRepository + " when there is no usable repository. ")
 	b.WriteString("Line 3 holds a clear and simple title for the run: one line, at most " + strconv.Itoa(titleLimit) + " characters, no quotes and no markdown. ")
 	b.WriteString("The " + instructionLabel + " may name a repository, and when it does that repository is the one to work on, even when it differs from the " + repositoryLabel + " line. ")

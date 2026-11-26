@@ -62,7 +62,7 @@ const (
 var relayQueryParams = map[string]string{
 	"platform": "github",
 	"page":     "1",
-	"limit":    "10",
+	"limit":    "5",
 }
 
 // testConfig groups the relay-facing settings used to build a test Service.

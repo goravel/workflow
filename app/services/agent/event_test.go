@@ -4,8 +4,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-
-	"goravel/app/constants"
 )
 
 const sampleRelayResponse = `{
@@ -392,57 +390,62 @@ func TestEventPrompt(t *testing.T) {
 	require.Equal(t, want, event.prompt("review", "goravel/goravel"))
 }
 
+// TestEventAgentPrompt pins the agent prompt as the event context verbatim: the
+// same links as the router prompt, no Repository line, and the instruction
+// exactly as written, with no trusted line appended for any agent.
 func TestEventAgentPrompt(t *testing.T) {
-	event := &event{
-		Event:      "issue_comment",
-		Repository: "goravel/goravel",
-		Payload: `{"number":123,"pull_request":{"number":123,"html_url":"https://github.com/goravel/goravel/pull/123"},` +
-			`"comment":{"id":24680,"html_url":"https://github.com/goravel/goravel/pull/123#issuecomment-24680","body":"@goravel-agent review"}}`,
-	}
-
-	body := "PR: https://github.com/goravel/goravel/pull/123\n" +
-		"comment: https://github.com/goravel/goravel/pull/123#issuecomment-24680\n" +
-		"Instruction: review"
-	posting := body + "\n" +
-		"comment the review result to the pr"
-
 	tests := []struct {
-		agent string
-		want  string
+		name        string
+		event       string
+		payload     string
+		instruction string
+		want        string
 	}{
-		// Analyze posts its report on the same pull request and gets the same
-		// line as review: one string, two agents.
-		{agent: constants.AgentReview, want: posting},
-		{agent: constants.AgentAnalyze, want: posting},
-		// Ship never posts on a mention, so the gate cannot widen to it.
-		{agent: constants.AgentShip, want: body},
+		{
+			name:        "pull request comment",
+			event:       "issue_comment",
+			payload:     `{"number":123,"pull_request":{"number":123,"html_url":"https://github.com/goravel/goravel/pull/123"},"comment":{"id":24680,"html_url":"https://github.com/goravel/goravel/pull/123#issuecomment-24680","body":"@goravel-agent review"}}`,
+			instruction: "review",
+			want: "PR: https://github.com/goravel/goravel/pull/123\n" +
+				"comment: https://github.com/goravel/goravel/pull/123#issuecomment-24680\n" +
+				"Instruction: review",
+		},
+		{
+			name:        "pull request description",
+			event:       "issue_comment",
+			payload:     `{"issue":{"number":45,"html_url":"https://github.com/goravel/goravel/pull/45","pull_request":{"html_url":"https://github.com/goravel/goravel/pull/45"},"body":"@goravel-agent review"}}`,
+			instruction: "review",
+			want: "PR: https://github.com/goravel/goravel/pull/45\n" +
+				"Instruction: review",
+		},
+		{
+			name:        "issue comment",
+			event:       "issue_comment",
+			payload:     `{"number":45,"comment":{"id":24680,"body":"@goravel-agent review"}}`,
+			instruction: "review",
+			want: "Issue: https://github.com/goravel/goravel/issues/45\n" +
+				"comment: https://github.com/goravel/goravel/issues/45#issuecomment-24680\n" +
+				"Instruction: review",
+		},
+		{
+			name:        "multi-line instruction",
+			event:       "issue_comment",
+			payload:     `{"number":123,"pull_request":{"number":123,"html_url":"https://github.com/goravel/goravel/pull/123"},"comment":{"id":24680,"html_url":"https://github.com/goravel/goravel/pull/123#issuecomment-24680","body":"@goravel-agent review\nthen post it"}}`,
+			instruction: "review\nthen post it",
+			want: "PR: https://github.com/goravel/goravel/pull/123\n" +
+				"comment: https://github.com/goravel/goravel/pull/123#issuecomment-24680\n" +
+				"Instruction: review\nthen post it",
+		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.agent, func(t *testing.T) {
-			got := event.agentPrompt(tt.agent, "review")
-			require.Equal(t, tt.want, got)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			event := &event{Event: test.event, Repository: "goravel/goravel", Payload: test.payload}
+
+			got := event.contextBlock(test.instruction)
+			require.Equal(t, test.want, got)
 			require.NotContains(t, got, "Repository:")
-		})
-	}
-}
-
-// TestEventAgentPromptNoPostOnIssue pins that a mention on a plain issue is never
-// steered, for every agent: only a pull request gets the post-to-PR line.
-func TestEventAgentPromptNoPostOnIssue(t *testing.T) {
-	event := &event{
-		Event:      "issue_comment",
-		Repository: "goravel/goravel",
-		Payload:    `{"number":45,"comment":{"id":24680,"body":"@goravel-agent review"}}`,
-	}
-
-	want := "Issue: https://github.com/goravel/goravel/issues/45\n" +
-		"comment: https://github.com/goravel/goravel/issues/45#issuecomment-24680\n" +
-		"Instruction: review"
-
-	for _, agent := range []string{constants.AgentShip, constants.AgentReview, constants.AgentAnalyze} {
-		t.Run(agent, func(t *testing.T) {
-			require.Equal(t, want, event.agentPrompt(agent, "review"))
+			require.NotContains(t, got, "comment the review result to the pr")
 		})
 	}
 }
@@ -635,4 +638,41 @@ func TestEventPromptFallbackLinks(t *testing.T) {
 		"comment: https://github.com/goravel/goravel/issues/45#issuecomment-24680\n" +
 		"Instruction: review"
 	require.Equal(t, want, event.prompt("review", "goravel/goravel"))
+}
+
+// TestEventPromptReviewCommentFallbackLink pins the synthesized mention link for
+// an inline review comment with no stored html_url: it is anchored with
+// #discussion_r so the run answers in that thread, and no link is built when the
+// pull request number is unknown.
+func TestEventPromptReviewCommentFallbackLink(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload string
+		want    string
+	}{
+		{
+			name: "discussion anchor",
+			payload: `{"pull_request":{"number":170},` +
+				`"comment":{"id":98765,"body":"@goravel-agent review"}}`,
+			want: "comment: https://github.com/goravel/example/pull/170#discussion_r98765",
+		},
+		{
+			name:    "no pull request number",
+			payload: `{"comment":{"id":98765,"body":"@goravel-agent review"}}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			event := &event{Event: eventPullRequestReviewComment, Repository: "goravel/example", Payload: test.payload}
+			got := event.prompt("review", "goravel/example")
+
+			if test.want != "" {
+				require.Contains(t, got, test.want)
+				require.NotContains(t, got, "#issuecomment-")
+				return
+			}
+			require.NotContains(t, got, "comment:")
+		})
+	}
 }

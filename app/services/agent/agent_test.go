@@ -297,9 +297,11 @@ func TestRouterAgentInstructions(t *testing.T) {
 		"Decide how to handle a GitHub mention. "+
 			"Reply with exactly three lines. "+
 			"Line 1 holds one agent from: "+
-			"analyze (analyzes an existing GitHub pull request for breaking changes and usage, without editing code), "+
+			"analyze (answers a question about an existing GitHub issue or pull request, covering breaking changes, usage, and the Laravel comparison, without editing code), "+
 			"review (reviews an existing GitHub pull request and reports findings), "+
 			"ship (plans the task first, then implements and drives it through review to a pull request). "+
+			"Choose analyze when the Instruction asks a question about a pull request or an issue: what a change breaks, how it is used, or how it compares with Laravel. "+
+			"Choose review to review an existing pull request, and ship when the Instruction asks for code to change. "+
 			"Line 2 holds the repository to work on as a bare owner/name, or - when there is no usable repository. "+
 			"Line 3 holds a clear and simple title for the run: one line, at most 60 characters, no quotes and no markdown. "+
 			"The Instruction may name a repository, and when it does that repository is the one to work on, "+

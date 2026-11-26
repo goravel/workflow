@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -32,6 +33,9 @@ const (
     reaction { content }
   }
 }`
+	// graphQLErrorBodyLimit caps the reply text copied into a non-2xx error so one
+	// HTML error page cannot fill a log line.
+	graphQLErrorBodyLimit = 256
 )
 
 // Reactor acknowledges a mention by reacting to the text that carried it.
@@ -97,6 +101,18 @@ func repositoryParts(repository string) (owner, repo string, ok bool) {
 	}
 
 	return owner, repo, true
+}
+
+// statusMessage describes a non-2xx reply by its status and body. The body is
+// read rather than decoded: a 5xx page is often HTML or empty, so decoding it
+// would report a JSON error, or a stray EOF that reads like a transport failure.
+func statusMessage(response *http.Response) string {
+	snippet, _ := io.ReadAll(io.LimitReader(response.Body, graphQLErrorBodyLimit))
+	if text := strings.TrimSpace(string(snippet)); text != "" {
+		return fmt.Sprintf("status %d: %s", response.StatusCode, text)
+	}
+
+	return fmt.Sprintf("status %d", response.StatusCode)
 }
 
 // React adds an eyes reaction to the comment. Adding a reaction that already
@@ -177,16 +193,18 @@ func (r *githubReactor) ReactToReview(ctx context.Context, repository, nodeID st
 	}
 	defer func() { _ = response.Body.Close() }()
 
-	// GitHub answers a rejected mutation with 200 and a non-empty errors array,
-	// so the body is decoded, not only the status read.
+	// The status is checked before the body is decoded: a 5xx page is HTML or
+	// empty, so decoding first would report a JSON error or a stray EOF.
+	if response.StatusCode < 200 || response.StatusCode > 299 {
+		return fmt.Errorf("%s: %s", prefix, statusMessage(response))
+	}
+
 	var result graphqlResponse
 	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
 		return fmt.Errorf("%s: decode response (status %d): %w", prefix, response.StatusCode, err)
 	}
-	if response.StatusCode < 200 || response.StatusCode > 299 {
-		return fmt.Errorf("%s: status %d", prefix, response.StatusCode)
-	}
 	if len(result.Errors) > 0 {
+		// A rejected mutation is a 200 with a non-empty errors array.
 		return fmt.Errorf("%s: %s", prefix, result.Errors[0].Message)
 	}
 

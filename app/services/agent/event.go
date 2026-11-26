@@ -5,8 +5,6 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
-
-	"goravel/app/constants"
 )
 
 const (
@@ -285,12 +283,6 @@ const (
 	instructionLabel = "Instruction"
 )
 
-// postInstructionSuffix is the trusted line appended under the Instruction for
-// an agent that posts its result on the pull request, steering the run to post
-// there. It is worded as the user's explicit request because those agents only
-// post a PR comment when the user asks for one.
-const postInstructionSuffix = "comment the review result to the pr"
-
 // prompt builds the context block the router sees: the source repository line,
 // the PR/Issue/comment links, and the untrusted instruction. The fixed lines are
 // emitted before the untrusted instruction so its text is read as the
@@ -305,23 +297,10 @@ func (e *event) prompt(instruction, repository string) string {
 // agentPrompt builds the context block handed to the agent. It carries the same
 // links and instruction as prompt but omits the Repository line: the agent runs
 // inside the checkout, so the repository is implied by its working directory.
-// The review and analyze agents are additionally steered to post their result
-// on the pull request; every other agent's prompt is unchanged.
-func (e *event) agentPrompt(agentName, instruction string) string {
-	payload, _ := e.payload()
-
-	prompt := e.contextBlock(instruction)
-	if postsOnPullRequest(agentName) && isPullRequest(payload) {
-		prompt += "\n" + postInstructionSuffix
-	}
-
-	return prompt
-}
-
-// postsOnPullRequest reports whether the agent posts its result on the pull
-// request when the event targets one.
-func postsOnPullRequest(agentName string) bool {
-	return agentName == constants.AgentReview || agentName == constants.AgentAnalyze
+// The instruction arrives exactly as the user wrote it: what to do with it, and
+// whether to post, is the agent's decision.
+func (e *event) agentPrompt(instruction string) string {
+	return e.contextBlock(instruction)
 }
 
 // contextBlock emits the PR/Issue/comment links followed by the instruction.
@@ -390,8 +369,10 @@ func (e *event) issueLink(payload *githubPayload) string {
 
 // commentLink returns the URL of the text that carried the mention: the review
 // body on a review event, otherwise the triggering comment. GitHub anchors a
-// review with #pullrequestreview-<id>, a comment with #issuecomment-<id>. It
-// returns "" when the event carries neither.
+// review with #pullrequestreview-<id>, a conversation comment with
+// #issuecomment-<id>, and an inline review comment with #discussion_r<id> so an
+// answer lands in that review thread. It returns "" when the event carries no
+// comment, or when the target number is unknown so no anchor can be built.
 func (e *event) commentLink(payload *githubPayload) string {
 	if e.Event == eventPullRequestReview {
 		if payload.Review.HTMLURL != "" {
@@ -407,17 +388,22 @@ func (e *event) commentLink(payload *githubPayload) string {
 	if payload.Comment.HTMLURL != "" {
 		return payload.Comment.HTMLURL
 	}
-	if payload.Comment.ID == 0 {
+	if payload.Comment.ID == 0 || e.target() == 0 {
 		return ""
 	}
 
-	path := "issues"
-	if isPullRequest(payload) {
+	path, anchor := "issues", "#issuecomment-"
+	switch {
+	case e.Event == eventPullRequestReviewComment:
+		// An inline review comment lives under the pull request collection and
+		// is reached through the #discussion_r anchor of its own thread.
+		path, anchor = "pull", "#discussion_r"
+	case isPullRequest(payload):
 		path = "pull"
 	}
 
 	return gitWebURL + e.Repository + "/" + path + "/" +
-		strconv.Itoa(e.target()) + "#issuecomment-" + strconv.FormatInt(payload.Comment.ID, 10)
+		strconv.Itoa(e.target()) + anchor + strconv.FormatInt(payload.Comment.ID, 10)
 }
 
 // reaction reports which comment the eyes reaction belongs to. A comment

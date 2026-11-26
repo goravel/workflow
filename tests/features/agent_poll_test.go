@@ -128,6 +128,14 @@ var (
 	// analyzePullRequestPage is the same pull request, asking for the analyze
 	// agent.
 	analyzePullRequestPage = pullRequestPage("@goravel-agent analyze this pull request")
+
+	// analyzeIssuePage is one issue_comment on an issue asking a question about
+	// a change, the shape the widened router must send to analyze.
+	analyzeIssuePage = `{"data":[
+		{"id":1,"delivery_id":"d-1","event":"issue_comment","action":"created",
+		 "repository":"goravel/framework","sender":"bowen",
+		 "payload":"{\"number\":42,\"issue\":{\"number\":42,\"html_url\":\"https://github.com/goravel/framework/issues/42\",\"body\":\"A change\"},\"comment\":{\"id\":98765,\"html_url\":\"https://github.com/goravel/framework/issues/42#issuecomment-98765\",\"body\":\"@goravel-agent does this break custom drivers?\"}}"}
+	],"total":1,"page":1,"limit":50}`
 )
 
 // pullRequestPage is one issue_comment on pull request 42 in goravel/framework
@@ -442,9 +450,10 @@ func (s *AgentPollTestSuite) TestPollReviewsPullRequest() {
 	s.Require().Equal(got.title, got.workspaceTitle, "workspace title must match the run title")
 	s.Require().Contains(got.prompt, "PR: https://github.com/goravel/framework/pull/42")
 	s.Require().Contains(got.prompt, "comment: https://github.com/goravel/framework/pull/42#issuecomment-98765")
-	s.Require().Contains(got.prompt, "Instruction: review\ncomment the review result to the pr")
+	s.Require().Contains(got.prompt, "Instruction: review")
 	s.Require().NotContains(got.prompt, "Repository:")
 	s.Require().NotContains(got.prompt, "Issue:")
+	s.Require().NotContains(got.prompt, "comment the review result to the pr")
 }
 
 // TestPollSolvesReviewMention covers a `@goravel-agent solve the comments` review
@@ -469,7 +478,7 @@ func (s *AgentPollTestSuite) TestPollSolvesReviewMention() {
 // comment on a pull request in goravel/framework. The router is live, so this
 // asserts the poller's observable outcome: paseo runs --mode analyze against a
 // workspace on the project folder, with the PR link the analyze prompt needs and
-// the same post-to-PR line the review agent gets.
+// the instruction verbatim.
 func (s *AgentPollTestSuite) TestPollAnalyzesPullRequest() {
 	got := s.pollOnce(analyzePullRequestPage)
 
@@ -485,11 +494,29 @@ func (s *AgentPollTestSuite) TestPollAnalyzesPullRequest() {
 	s.Require().Equal("prj_tmp", got.project)
 	s.Require().Contains(got.prompt, "PR: https://github.com/goravel/framework/pull/42")
 	s.Require().Contains(got.prompt, "comment: https://github.com/goravel/framework/pull/42#issuecomment-98765")
-	s.Require().Contains(got.prompt, "Instruction: analyze this pull request\ncomment the review result to the pr")
-	s.Require().Equal(1, strings.Count(got.prompt, "comment the review result to the pr"),
-		"the post-to-PR line must appear once, not once per agent branch")
+	s.Require().Contains(got.prompt, "Instruction: analyze this pull request")
 	s.Require().NotContains(got.prompt, "Repository:")
 	s.Require().NotContains(got.prompt, "Issue:")
+	s.Require().NotContains(got.prompt, "comment the review result to the pr")
+}
+
+// TestPollAnalyzesIssueQuestion covers a question about an issue: the widened
+// router sends it to analyze, and the run gets the issue and comment links with
+// no post-to-PR line.
+func (s *AgentPollTestSuite) TestPollAnalyzesIssueQuestion() {
+	got := s.pollOnce(analyzeIssuePage)
+
+	s.Require().Empty(got.lastError)
+	s.Require().Equal([]string{"1"}, got.acknowledged,
+		"poll-events did not acknowledge the event; last error: %s", got.lastError)
+	s.Require().Equal("analyze", got.mode,
+		"live router did not send the issue question to analyze (context: %s)", got.lastError)
+	s.Require().Contains(got.prompt, "Issue: https://github.com/goravel/framework/issues/42")
+	s.Require().Contains(got.prompt, "comment: https://github.com/goravel/framework/issues/42#issuecomment-98765")
+	s.Require().Contains(got.prompt, "Instruction: does this break custom drivers?")
+	s.Require().NotContains(got.prompt, "PR:")
+	s.Require().NotContains(got.prompt, "Repository:")
+	s.Require().NotContains(got.prompt, "comment the review result to the pr")
 }
 
 // TestAgentModelsConfigCoversRoutableAgents checks the shipped agent.models map.

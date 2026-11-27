@@ -80,8 +80,8 @@ func (e *event) actionable() bool {
 }
 
 // instruction reports whether the event mentions the handle and, if so, returns
-// the comment body that carried it, mention included. A payload decode error is
-// ignored here so the poll loop can log it once via payload().
+// the text that carried it, mention included. A payload decode error is ignored
+// here so the poll loop can log it once via payload().
 func (e *event) instruction(mention string) (string, bool) {
 	payload, _ := e.payload()
 
@@ -220,8 +220,12 @@ func (e *event) body(payload *githubPayload) string {
 // the router and the agent both read the comment as prose. Returning only what
 // follows the handle is what made goravel/installer#88 reach the router as
 // `Any suggestions`, without the sentence that explained the change. Only the
-// outer edges are trimmed so the prompt's `Instruction:` line stays one clean
-// line; nothing inside the comment is touched.
+// outer whitespace is trimmed: the comment itself is untouched and may still
+// span several lines under the `Instruction:` label.
+//
+// The whole text is the instruction, so a long issue or pull request description
+// inflates the router prompt. That is accepted: the body is the context that makes
+// the route correct, and a cap risks cutting the sentence the fix exists to keep.
 //
 // ok reports whether the text after the first mention carries a letter or digit:
 // a bare ping (`hi @goravel-agent`, `**@goravel-agent**`) is not an instruction
@@ -251,7 +255,9 @@ func mentionInstruction(text, mention string) (string, bool) {
 		// The gate is unchanged: an instruction is text after a mention, so prose
 		// before a bare ping never makes one. The trim set is the set this gate has
 		// always used and must not drift.
-		return strings.TrimSpace(text), hasLetterOrDigit(strings.Trim(text[end:], " \t\r\n,.;:!?*_`~#()[]{}\"'"))
+		tail := strings.Trim(text[end:], " \t\r\n,.;:!?*_`~#()[]{}\"'")
+
+		return strings.TrimSpace(text), hasLetterOrDigit(tail)
 	}
 
 	return "", false

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
-	"unicode"
 )
 
 const (
@@ -80,8 +79,9 @@ func (e *event) actionable() bool {
 }
 
 // instruction reports whether the event mentions the handle and, if so, returns
-// the text that carried it, mention included. A payload decode error is ignored
-// here so the poll loop can log it once via payload().
+// the whole text that carried it, mention included, with only its outer
+// whitespace trimmed. A payload decode error is ignored here so the poll loop can
+// log it once via payload().
 func (e *event) instruction(mention string) (string, bool) {
 	payload, _ := e.payload()
 
@@ -227,10 +227,12 @@ func (e *event) body(payload *githubPayload) string {
 // inflates the router prompt. That is accepted: the body is the context that makes
 // the route correct, and a cap risks cutting the sentence the fix exists to keep.
 //
-// ok reports whether the text after the first mention carries a letter or digit:
-// a bare ping (`hi @goravel-agent`, `**@goravel-agent**`) is not an instruction
-// and the caller drops the event. The text is returned either way; the caller
-// ignores it when ok is false. A text with no valid mention returns "", false.
+// The mention itself is the trigger: any text carrying a valid mention is an
+// instruction, even when nothing follows the handle (`hi @goravel-agent`,
+// `**@goravel-agent**`, `@goravel-agent`). The caller never inspects the text
+// around the handle; what to do with it is the router's and the agent's decision.
+//
+// A text with no valid mention returns "", false.
 func mentionInstruction(text, mention string) (string, bool) {
 	if mention == "" {
 		return "", false
@@ -247,31 +249,14 @@ func mentionInstruction(text, mention string) (string, bool) {
 			continue
 		}
 
-		end := i + handleLen
-		if end != len(text) && isHandleByte(text[end]) {
+		if i+handleLen != len(text) && isHandleByte(text[i+handleLen]) {
 			continue
 		}
 
-		// The gate is unchanged: an instruction is text after a mention, so prose
-		// before a bare ping never makes one. The trim set is the set this gate has
-		// always used and must not drift.
-		tail := strings.Trim(text[end:], " \t\r\n,.;:!?*_`~#()[]{}\"'")
-
-		return strings.TrimSpace(text), hasLetterOrDigit(tail)
+		return strings.TrimSpace(text), true
 	}
 
 	return "", false
-}
-
-// hasLetterOrDigit reports whether s contains at least one letter or digit.
-func hasLetterOrDigit(s string) bool {
-	for _, r := range s {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			return true
-		}
-	}
-
-	return false
 }
 
 // isHandleByte reports whether b continues a GitHub login: a letter, digit,

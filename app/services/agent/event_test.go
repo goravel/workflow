@@ -143,10 +143,28 @@ func TestEventInstructionFallbacks(t *testing.T) {
 			ok:      false,
 		},
 		{
-			name:    "mention without instruction",
+			name:    "bare ping is consumed",
 			payload: `{"number":4,"comment":{"id":1,"body":"hi @goravel-agent"}}`,
 			want:    "hi @goravel-agent",
-			ok:      false,
+			ok:      true,
+		},
+		{
+			name:    "handle at the end of the prose is consumed",
+			payload: `{"number":9,"comment":{"id":1,"body":"Here is the rename plan. @goravel-agent"}}`,
+			want:    "Here is the rename plan. @goravel-agent",
+			ok:      true,
+		},
+		{
+			name:    "handle alone is consumed",
+			payload: `{"number":10,"comment":{"id":1,"body":"@goravel-agent"}}`,
+			want:    "@goravel-agent",
+			ok:      true,
+		},
+		{
+			name:    "decorated handle alone is consumed",
+			payload: `{"number":4,"comment":{"id":1,"body":"**@goravel-agent**"}}`,
+			want:    "**@goravel-agent**",
+			ok:      true,
 		},
 		{
 			name:    "longer handle is not a mention",
@@ -199,12 +217,6 @@ func TestEventInstructionFallbacks(t *testing.T) {
 			payload: `{"number":4,"comment":{"id":1,"body":"@goravel-agent, please review"}}`,
 			want:    "@goravel-agent, please review",
 			ok:      true,
-		},
-		{
-			name:    "bare decorated mention is not an instruction",
-			payload: `{"number":4,"comment":{"id":1,"body":"**@goravel-agent**"}}`,
-			want:    "**@goravel-agent**",
-			ok:      false,
 		},
 		{
 			name:    "case-insensitive handle",

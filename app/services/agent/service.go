@@ -172,6 +172,8 @@ func (s *Service) Poll(ctx context.Context) error {
 
 		facades.Log().Debugf("Processing event %d: %+v", ev.ID, ev.actionable())
 
+		// Only text carrying a valid mention is routed; the mention itself is
+		// enough, so there is no further instruction check here.
 		instruction, ok := ev.instruction(s.mention)
 		if !ok {
 			toDelete = append(toDelete, ev.ID)

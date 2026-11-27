@@ -80,8 +80,8 @@ func (e *event) actionable() bool {
 }
 
 // instruction reports whether the event mentions the handle and, if so, returns
-// the instruction that follows it. A payload decode error is ignored here so the
-// poll loop can log it once via payload().
+// the comment body that carried it, mention included. A payload decode error is
+// ignored here so the poll loop can log it once via payload().
 func (e *event) instruction(mention string) (string, bool) {
 	payload, _ := e.payload()
 
@@ -209,12 +209,24 @@ func (e *event) body(payload *githubPayload) string {
 }
 
 // mentionInstruction reports whether the text mentions the handle and, if so,
-// returns the text that follows it. Matching is case-insensitive and, as with
-// GitHub logins, `-` counts as a handle character on both boundaries, so
-// `@goravel-agent2`, `@goravel-agent-bot` and `bob@goravel-agent.com` are not
-// mentions while `@Goravel-Agent, please review` is. The hyphen inside the
-// handle is literal: `@goravel_agent` and `@goravel agent` are not mentions.
-// All slicing stays on the original text.
+// returns the text with only its outer whitespace trimmed. Matching is
+// case-insensitive and, as with GitHub logins, `-` counts as a handle character
+// on both boundaries, so `@goravel-agent2`, `@goravel-agent-bot` and
+// `bob@goravel-agent.com` are not mentions while `@Goravel-Agent, please review`
+// is. The hyphen inside the handle is literal: `@goravel_agent` and
+// `@goravel agent` are not mentions.
+//
+// The mention stays in the text: it is part of the sentence the user wrote, and
+// the router and the agent both read the comment as prose. Returning only what
+// follows the handle is what made goravel/installer#88 reach the router as
+// `Any suggestions`, without the sentence that explained the change. Only the
+// outer edges are trimmed so the prompt's `Instruction:` line stays one clean
+// line; nothing inside the comment is touched.
+//
+// ok reports whether the text after the first mention carries a letter or digit:
+// a bare ping (`hi @goravel-agent`, `**@goravel-agent**`) is not an instruction
+// and the caller drops the event. The text is returned either way; the caller
+// ignores it when ok is false. A text with no valid mention returns "", false.
 func mentionInstruction(text, mention string) (string, bool) {
 	if mention == "" {
 		return "", false
@@ -236,12 +248,10 @@ func mentionInstruction(text, mention string) (string, bool) {
 			continue
 		}
 
-		instruction := strings.Trim(text[end:], " \t\r\n,.;:!?*_`~#()[]{}\"'")
-		if !hasLetterOrDigit(instruction) {
-			return "", false
-		}
-
-		return instruction, true
+		// The gate is unchanged: an instruction is text after a mention, so prose
+		// before a bare ping never makes one. The trim set is the set this gate has
+		// always used and must not drift.
+		return strings.TrimSpace(text), hasLetterOrDigit(strings.Trim(text[end:], " \t\r\n,.;:!?*_`~#()[]{}\"'"))
 	}
 
 	return "", false

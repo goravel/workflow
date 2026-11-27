@@ -40,6 +40,12 @@ const sampleRelayResponse = `{
 	"limit": 50
 }`
 
+// installer88 is the goravel/installer#88 comment: the sentence explaining the
+// change sits before the mention, so only `Any suggestions` used to reach the
+// router and the agent.
+const installer88 = "Sorry, missed it. The current module may be renamed to `project`, `pkg`, " +
+	"or something else. Make it a breaking change. @goravel-agent Any suggestions?"
+
 func TestParseEnvelope(t *testing.T) {
 	env, err := parseEnvelope([]byte(sampleRelayResponse))
 	require.NoError(t, err)
@@ -91,7 +97,7 @@ func TestEventInstruction(t *testing.T) {
 
 	instruction, ok := env.Data[0].instruction(DefaultMention)
 	require.True(t, ok)
-	require.Equal(t, "review", instruction)
+	require.Equal(t, "@goravel-agent review", instruction)
 
 	_, ok = env.Data[1].instruction(DefaultMention)
 	require.False(t, ok)
@@ -108,26 +114,26 @@ func TestEventInstructionFallbacks(t *testing.T) {
 		{
 			name:    "comment body",
 			payload: `{"number":1,"comment":{"id":9,"body":"@goravel-agent plan this"}}`,
-			want:    "plan this",
+			want:    "@goravel-agent plan this",
 			ok:      true,
 		},
 		{
 			name:    "issue body",
 			payload: `{"number":2,"issue":{"number":2,"body":"@goravel-agent ship"}}`,
-			want:    "ship",
+			want:    "@goravel-agent ship",
 			ok:      true,
 		},
 		{
 			name:    "pull request body",
 			payload: `{"number":3,"pull_request":{"number":3,"body":"@goravel-agent review please"}}`,
-			want:    "review please",
+			want:    "@goravel-agent review please",
 			ok:      true,
 		},
 		{
 			name:    "review body",
 			event:   eventPullRequestReview,
 			payload: `{"pull_request":{"number":170},"review":{"id":5778727749,"node_id":"MDE3OlB1bGxSZXF1ZXN0UmV2aWV3ODA=","body":"@goravel-agent solve the comments"}}`,
-			want:    "solve the comments",
+			want:    "@goravel-agent solve the comments",
 			ok:      true,
 		},
 		{
@@ -139,6 +145,7 @@ func TestEventInstructionFallbacks(t *testing.T) {
 		{
 			name:    "mention without instruction",
 			payload: `{"number":4,"comment":{"id":1,"body":"hi @goravel-agent"}}`,
+			want:    "hi @goravel-agent",
 			ok:      false,
 		},
 		{
@@ -184,24 +191,51 @@ func TestEventInstructionFallbacks(t *testing.T) {
 		{
 			name:    "valid mention after a rejected one",
 			payload: `{"number":4,"comment":{"id":1,"body":"@goravel-agent2 then @goravel-agent review"}}`,
-			want:    "review",
+			want:    "@goravel-agent2 then @goravel-agent review",
 			ok:      true,
 		},
 		{
 			name:    "handle followed by punctuation",
 			payload: `{"number":4,"comment":{"id":1,"body":"@goravel-agent, please review"}}`,
-			want:    "please review",
+			want:    "@goravel-agent, please review",
 			ok:      true,
 		},
 		{
 			name:    "bare decorated mention is not an instruction",
 			payload: `{"number":4,"comment":{"id":1,"body":"**@goravel-agent**"}}`,
+			want:    "**@goravel-agent**",
 			ok:      false,
 		},
 		{
 			name:    "case-insensitive handle",
 			payload: `{"number":4,"comment":{"id":1,"body":"@Goravel-Agent review"}}`,
-			want:    "review",
+			want:    "@Goravel-Agent review",
+			ok:      true,
+		},
+		{
+			// goravel/installer#88: the sentence before the mention is the context
+			// the router and the agent were losing.
+			name:    "whole comment with its mention",
+			payload: `{"number":88,"comment":{"id":1,"body":"` + installer88 + `"}}`,
+			want:    installer88,
+			ok:      true,
+		},
+		{
+			name:    "mention mid-sentence keeps the sentence",
+			payload: `{"number":6,"comment":{"id":1,"body":"The rename is breaking. @goravel-agent what about the config key?"}}`,
+			want:    "The rename is breaking. @goravel-agent what about the config key?",
+			ok:      true,
+		},
+		{
+			name:    "paragraphs stay verbatim",
+			payload: `{"number":7,"comment":{"id":1,"body":"First paragraph.\n\n@goravel-agent please check the rename.\n\nSecond paragraph."}}`,
+			want:    "First paragraph.\n\n@goravel-agent please check the rename.\n\nSecond paragraph.",
+			ok:      true,
+		},
+		{
+			name:    "outer whitespace is trimmed",
+			payload: `{"number":8,"comment":{"id":1,"body":"  @goravel-agent review  "}}`,
+			want:    "@goravel-agent review",
 			ok:      true,
 		},
 		{
@@ -386,8 +420,36 @@ func TestEventPrompt(t *testing.T) {
 	want := "Repository: goravel/goravel\n" +
 		"PR: https://github.com/goravel/goravel/pull/123\n" +
 		"comment: https://github.com/goravel/goravel/pull/123#issuecomment-24680\n" +
-		"Instruction: review"
-	require.Equal(t, want, event.prompt("review", "goravel/goravel"))
+		"Instruction: @goravel-agent review"
+	require.Equal(t, want, event.prompt("@goravel-agent review", "goravel/goravel"))
+}
+
+// TestEventPromptKeepsTheWholeComment pins goravel/installer#88: the router and
+// the dispatched agent get the whole comment that carried the mention, handle
+// included, so the sentence explaining the change is not lost.
+func TestEventPromptKeepsTheWholeComment(t *testing.T) {
+	event := &event{
+		Event:      "issue_comment",
+		Repository: "goravel/installer",
+		Payload: `{"number":88,"comment":{"id":1061,` +
+			`"html_url":"https://github.com/goravel/installer/issues/88#issuecomment-1061",` +
+			`"body":"` + installer88 + `"}}`,
+	}
+
+	instruction, ok := event.instruction(DefaultMention)
+	require.True(t, ok)
+	require.Equal(t, installer88, instruction)
+
+	want := "Instruction: " + installer88
+
+	require.Equal(t,
+		"Repository: goravel/installer\n"+
+			"Issue: https://github.com/goravel/installer/issues/88\n"+
+			"comment: https://github.com/goravel/installer/issues/88#issuecomment-1061\n"+
+			want,
+		event.prompt(instruction, "goravel/installer"))
+
+	require.Contains(t, event.contextBlock(instruction), want)
 }
 
 // TestEventAgentPrompt pins the agent prompt as the event context verbatim: the
@@ -405,36 +467,36 @@ func TestEventAgentPrompt(t *testing.T) {
 			name:        "pull request comment",
 			event:       "issue_comment",
 			payload:     `{"number":123,"pull_request":{"number":123,"html_url":"https://github.com/goravel/goravel/pull/123"},"comment":{"id":24680,"html_url":"https://github.com/goravel/goravel/pull/123#issuecomment-24680","body":"@goravel-agent review"}}`,
-			instruction: "review",
+			instruction: "@goravel-agent review",
 			want: "PR: https://github.com/goravel/goravel/pull/123\n" +
 				"comment: https://github.com/goravel/goravel/pull/123#issuecomment-24680\n" +
-				"Instruction: review",
+				"Instruction: @goravel-agent review",
 		},
 		{
 			name:        "pull request description",
 			event:       "issue_comment",
 			payload:     `{"issue":{"number":45,"html_url":"https://github.com/goravel/goravel/pull/45","pull_request":{"html_url":"https://github.com/goravel/goravel/pull/45"},"body":"@goravel-agent review"}}`,
-			instruction: "review",
+			instruction: "@goravel-agent review",
 			want: "PR: https://github.com/goravel/goravel/pull/45\n" +
-				"Instruction: review",
+				"Instruction: @goravel-agent review",
 		},
 		{
 			name:        "issue comment",
 			event:       "issue_comment",
 			payload:     `{"number":45,"comment":{"id":24680,"body":"@goravel-agent review"}}`,
-			instruction: "review",
+			instruction: "@goravel-agent review",
 			want: "Issue: https://github.com/goravel/goravel/issues/45\n" +
 				"comment: https://github.com/goravel/goravel/issues/45#issuecomment-24680\n" +
-				"Instruction: review",
+				"Instruction: @goravel-agent review",
 		},
 		{
 			name:        "multi-line instruction",
 			event:       "issue_comment",
 			payload:     `{"number":123,"pull_request":{"number":123,"html_url":"https://github.com/goravel/goravel/pull/123"},"comment":{"id":24680,"html_url":"https://github.com/goravel/goravel/pull/123#issuecomment-24680","body":"@goravel-agent review\nthen post it"}}`,
-			instruction: "review\nthen post it",
+			instruction: "@goravel-agent review\nthen post it",
 			want: "PR: https://github.com/goravel/goravel/pull/123\n" +
 				"comment: https://github.com/goravel/goravel/pull/123#issuecomment-24680\n" +
-				"Instruction: review\nthen post it",
+				"Instruction: @goravel-agent review\nthen post it",
 		},
 	}
 
@@ -476,12 +538,12 @@ func TestEventPromptReview(t *testing.T) {
 	want := "Repository: goravel/example\n" +
 		"PR: https://github.com/goravel/example/pull/170\n" +
 		"comment: https://github.com/goravel/example/pull/170#pullrequestreview-5778727749\n" +
-		"Instruction: solve the comments"
+		"Instruction: @goravel-agent solve the comments"
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			event := &event{Event: eventPullRequestReview, Repository: "goravel/example", Payload: test.payload}
-			require.Equal(t, want, event.prompt("solve the comments", "goravel/example"))
+			require.Equal(t, want, event.prompt("@goravel-agent solve the comments", "goravel/example"))
 		})
 	}
 }
@@ -502,8 +564,8 @@ func TestEventPromptIgnoresReviewOnOtherEvents(t *testing.T) {
 	want := "Repository: goravel/example\n" +
 		"PR: https://github.com/goravel/example/pull/170\n" +
 		"comment: https://github.com/goravel/example/pull/170#discussion_r98765\n" +
-		"Instruction: review"
-	require.Equal(t, want, event.prompt("review", "goravel/example"))
+		"Instruction: @goravel-agent review"
+	require.Equal(t, want, event.prompt("@goravel-agent review", "goravel/example"))
 }
 
 func TestEventPromptWithoutComment(t *testing.T) {
@@ -516,8 +578,8 @@ func TestEventPromptWithoutComment(t *testing.T) {
 
 	want := "Repository: goravel/framework\n" +
 		"Issue: https://github.com/goravel/framework/issues/5\n" +
-		"Instruction: plan"
-	require.Equal(t, want, event.prompt("plan", "goravel/framework"))
+		"Instruction: @goravel-agent plan"
+	require.Equal(t, want, event.prompt("@goravel-agent plan", "goravel/framework"))
 }
 
 // TestEventPromptTargetRepository pins that the Repository line shows the
@@ -533,8 +595,8 @@ func TestEventPromptTargetRepository(t *testing.T) {
 
 	want := "Repository: goravel/framework\n" +
 		"Issue: https://github.com/goravel/goravel/issues/45\n" +
-		"Instruction: plan"
-	require.Equal(t, want, event.prompt("plan", "goravel/framework"))
+		"Instruction: @goravel-agent plan"
+	require.Equal(t, want, event.prompt("@goravel-agent plan", "goravel/framework"))
 }
 
 // TestEventPromptMutuallyExclusiveLinks pins that a pull request shows only the
@@ -604,7 +666,7 @@ func TestEventPromptPullRequestLinks(t *testing.T) {
 				`"body":"@goravel-agent review"}}`,
 			want: "Repository: goravel/goravel\n" +
 				"PR: https://github.com/goravel/goravel/pull/45\n" +
-				"Instruction: review",
+				"Instruction: @goravel-agent review",
 		},
 		{
 			name:    "pull request without html_url",
@@ -612,14 +674,14 @@ func TestEventPromptPullRequestLinks(t *testing.T) {
 			want: "Repository: goravel/goravel\n" +
 				"PR: https://github.com/goravel/goravel/pull/123\n" +
 				"comment: https://github.com/goravel/goravel/pull/123#issuecomment-24680\n" +
-				"Instruction: review",
+				"Instruction: @goravel-agent review",
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			event := &event{Repository: "goravel/goravel", Payload: test.payload}
-			require.Equal(t, test.want, event.prompt("review", "goravel/goravel"))
+			require.Equal(t, test.want, event.prompt("@goravel-agent review", "goravel/goravel"))
 		})
 	}
 }
@@ -636,8 +698,8 @@ func TestEventPromptFallbackLinks(t *testing.T) {
 	want := "Repository: goravel/goravel\n" +
 		"Issue: https://github.com/goravel/goravel/issues/45\n" +
 		"comment: https://github.com/goravel/goravel/issues/45#issuecomment-24680\n" +
-		"Instruction: review"
-	require.Equal(t, want, event.prompt("review", "goravel/goravel"))
+		"Instruction: @goravel-agent review"
+	require.Equal(t, want, event.prompt("@goravel-agent review", "goravel/goravel"))
 }
 
 // TestEventPromptReviewCommentFallbackLink pins the synthesized mention link for

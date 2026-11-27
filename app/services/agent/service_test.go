@@ -194,7 +194,7 @@ func TestServicePollDispatchesMentionsAndDeletes(t *testing.T) {
 	// the routed target.
 	router.EXPECT().Route(testifymock.Anything, testifymock.MatchedBy(func(p string) bool {
 		return strings.Contains(p, "Repository: goravel/goravel") &&
-			strings.Contains(p, "Instruction: review")
+			strings.Contains(p, "Instruction: @goravel-agent review")
 	})).Return(constants.AgentReview, "goravel/goravel", "Review issue 123", nil).Once()
 
 	dispatcher := mocksagent.NewDispatcher(t)
@@ -205,7 +205,7 @@ func TestServicePollDispatchesMentionsAndDeletes(t *testing.T) {
 				req.Agent == constants.AgentReview &&
 				req.Title == "Review issue 123" &&
 				!strings.Contains(req.Prompt, "Repository:") &&
-				strings.Contains(req.Prompt, "Instruction: review")
+				strings.Contains(req.Prompt, "Instruction: @goravel-agent review")
 		})).
 		Return(nil).
 		Once()
@@ -1324,7 +1324,7 @@ func TestServicePollDispatchesReviewMention(t *testing.T) {
 	router.EXPECT().Route(testifymock.Anything, testifymock.MatchedBy(func(p string) bool {
 		return strings.Contains(p, "PR: https://github.com/goravel/example/pull/170") &&
 			strings.Contains(p, "comment: https://github.com/goravel/example/pull/170#pullrequestreview-5778727749") &&
-			strings.Contains(p, "Instruction: solve the comments")
+			strings.Contains(p, "Instruction: @goravel-agent solve the comments")
 	})).Return(constants.AgentShip, "goravel/example", "", nil).Once()
 
 	dispatcher := mocksagent.NewDispatcher(t)
@@ -1335,7 +1335,7 @@ func TestServicePollDispatchesReviewMention(t *testing.T) {
 				req.Agent == constants.AgentShip &&
 				req.Title == "PR #170" &&
 				!strings.Contains(req.Prompt, "Repository:") &&
-				strings.Contains(req.Prompt, "Instruction: solve the comments")
+				strings.Contains(req.Prompt, "Instruction: @goravel-agent solve the comments")
 		})).
 		Return(nil).
 		Once()

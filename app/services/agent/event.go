@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
-	"unicode"
 )
 
 const (
@@ -80,8 +79,9 @@ func (e *event) actionable() bool {
 }
 
 // instruction reports whether the event mentions the handle and, if so, returns
-// the instruction that follows it. A payload decode error is ignored here so the
-// poll loop can log it once via payload().
+// the whole text that carried it, mention included, with only its outer
+// whitespace trimmed. A payload decode error is ignored here so the poll loop can
+// log it once via payload().
 func (e *event) instruction(mention string) (string, bool) {
 	payload, _ := e.payload()
 
@@ -209,12 +209,30 @@ func (e *event) body(payload *githubPayload) string {
 }
 
 // mentionInstruction reports whether the text mentions the handle and, if so,
-// returns the text that follows it. Matching is case-insensitive and, as with
-// GitHub logins, `-` counts as a handle character on both boundaries, so
-// `@goravel-agent2`, `@goravel-agent-bot` and `bob@goravel-agent.com` are not
-// mentions while `@Goravel-Agent, please review` is. The hyphen inside the
-// handle is literal: `@goravel_agent` and `@goravel agent` are not mentions.
-// All slicing stays on the original text.
+// returns the text with only its outer whitespace trimmed. Matching is
+// case-insensitive and, as with GitHub logins, `-` counts as a handle character
+// on both boundaries, so `@goravel-agent2`, `@goravel-agent-bot` and
+// `bob@goravel-agent.com` are not mentions while `@Goravel-Agent, please review`
+// is. The hyphen inside the handle is literal: `@goravel_agent` and
+// `@goravel agent` are not mentions.
+//
+// The mention stays in the text: it is part of the sentence the user wrote, and
+// the router and the agent both read the comment as prose. Returning only what
+// follows the handle is what made goravel/installer#88 reach the router as
+// `Any suggestions`, without the sentence that explained the change. Only the
+// outer whitespace is trimmed: the comment itself is untouched and may still
+// span several lines under the `Instruction:` label.
+//
+// The whole text is the instruction, so a long issue or pull request description
+// inflates the router prompt. That is accepted: the body is the context that makes
+// the route correct, and a cap risks cutting the sentence the fix exists to keep.
+//
+// The mention itself is the trigger: any text carrying a valid mention is an
+// instruction, even when nothing follows the handle (`hi @goravel-agent`,
+// `**@goravel-agent**`, `@goravel-agent`). The caller never inspects the text
+// around the handle; what to do with it is the router's and the agent's decision.
+//
+// A text with no valid mention returns "", false.
 func mentionInstruction(text, mention string) (string, bool) {
 	if mention == "" {
 		return "", false
@@ -231,31 +249,14 @@ func mentionInstruction(text, mention string) (string, bool) {
 			continue
 		}
 
-		end := i + handleLen
-		if end != len(text) && isHandleByte(text[end]) {
+		if i+handleLen != len(text) && isHandleByte(text[i+handleLen]) {
 			continue
 		}
 
-		instruction := strings.Trim(text[end:], " \t\r\n,.;:!?*_`~#()[]{}\"'")
-		if !hasLetterOrDigit(instruction) {
-			return "", false
-		}
-
-		return instruction, true
+		return strings.TrimSpace(text), true
 	}
 
 	return "", false
-}
-
-// hasLetterOrDigit reports whether s contains at least one letter or digit.
-func hasLetterOrDigit(s string) bool {
-	for _, r := range s {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			return true
-		}
-	}
-
-	return false
 }
 
 // isHandleByte reports whether b continues a GitHub login: a letter, digit,

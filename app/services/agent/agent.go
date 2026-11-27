@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/goravel/framework/contracts/ai"
 
@@ -226,6 +227,17 @@ func isNamePart(part string) bool {
 	}
 
 	return true
+}
+
+// hasLetterOrDigit reports whether s contains at least one letter or digit.
+func hasLetterOrDigit(s string) bool {
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // routerAgent is the AI agent used to classify instructions.
